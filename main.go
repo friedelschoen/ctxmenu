@@ -340,7 +340,7 @@ func (menu *Menu) makeItem(label, output, imagefile string, align Alignment) (*I
 	item.w = menu.xmenu.padX * 2
 
 	if label == "" {
-		item.h = menu.xmenu.separator_pixels + menu.xmenu.padY*2
+		item.h = 1 + menu.xmenu.padY*2
 		return &item, nil
 	}
 
@@ -565,12 +565,10 @@ func (menu *Menu) drawItem(y int, index int, item *Item) error {
 		textY := item.h/2 - textH/2
 		menu.render.Copy(tex, nil, &sdl.Rect{X: int32(x), Y: int32(y + textY), W: int32(textW), H: int32(textH)})
 	} else {
-		x0 := menu.xmenu.border_pixels + menu.xmenu.padX
-		x1 := menu.w - menu.xmenu.border_pixels - menu.xmenu.padX
-		y0 := y + menu.xmenu.padY
-		// y1 := item.h - y + menu.xmenu.horzpadding
+		x := menu.xmenu.border_pixels + menu.xmenu.padX + menu.xmenu.separator_pixels
+		y := y + menu.xmenu.padY
 		menu.render.SetDrawColor(menu.xmenu.separator.R, menu.xmenu.separator.G, menu.xmenu.separator.B, menu.xmenu.separator.A)
-		menu.render.FillRect(&sdl.Rect{X: int32(x0), Y: int32(y0), W: int32(x1 - x0), H: int32(menu.xmenu.separator_pixels)})
+		menu.render.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(menu.w - x), H: int32(1)})
 	}
 	return nil
 }
@@ -1047,8 +1045,8 @@ func main() {
 		iconpadding: 2,
 
 		/* area around the icon, the triangle and the separator */
-		padX: 8,
-		padY: 8,
+		padX: 4,
+		padY: 4,
 	}
 
 	xmenu.firsttime = true
