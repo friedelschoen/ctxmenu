@@ -923,12 +923,17 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 			}
 			action = ActionClear | ActionMap | ActionDraw
 		case *sdl.MouseWheelEvent:
+			if curmenu.overflow == -1 {
+				break
+			}
 			if ev.Y < 0 {
-				curmenu.selected = curmenu.itemcycle(ItemPrev)
-				action = ActionClear | ActionDraw | ActionWarp
+				curmenu.first = max(curmenu.first-1, 0)
+				action = ActionClear | ActionMap | ActionDraw
+				break
 			} else if ev.Y > 0 {
-				curmenu.selected = curmenu.itemcycle(ItemNext)
-				action = ActionClear | ActionDraw | ActionWarp
+				curmenu.first = min(curmenu.first+1, len(curmenu.items)-curmenu.overflow)
+				action = ActionClear | ActionMap | ActionDraw
+				break
 			}
 		case *sdl.MouseButtonEvent:
 			if ev.State != sdl.PRESSED {
