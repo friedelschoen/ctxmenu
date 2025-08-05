@@ -7,14 +7,16 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	"image/png"
 	"iter"
 	"os"
 	"path"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 	"unicode"
 
+	"github.com/veandco/go-sdl2/img"
 	"github.com/veandco/go-sdl2/sdl"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
@@ -88,9 +90,7 @@ type Config struct {
 	border_pixels       int
 	separator_pixels    int
 	gap_pixels          int
-	triangle_width      int
-	triangle_height     int
-	iconpadding         int
+	iconsize            int
 	//	horzpadding         int
 	//	vertpadding         int
 	padX, padY int
@@ -101,15 +101,23 @@ type Config struct {
 	posx, posy int /* rootmenu position */
 }
 
+type OverflowItem int
+
+const (
+	OverflowTop OverflowItem = iota - 1
+	OverflowNone
+	OverflowBottom
+)
+
 /* menu item structure */
 type Item struct {
-	parent  *Menu  /* parent */
-	label   string /* string to be drawed on menu */
-	output  string /* string to be outputed when item is clicked */
-	file    string /* filename of the icon */
-	submenu *Menu  /* submenu spawned by clicking on item */
-	icon    image.Image
-	align   Alignment
+	parent     *Menu  /* parent */
+	label      string /* string to be drawed on menu */
+	output     string /* string to be outputed when item is clicked */
+	submenu    *Menu  /* submenu spawned by clicking on item */
+	icon       *sdl.Surface
+	align      Alignment
+	overflower OverflowItem
 
 	w, h int /* item geometry */
 }
@@ -271,16 +279,11 @@ func parseColor(s string) (*color.NRGBA, error) {
 	}, nil
 }
 
-func (config *Config) iconsize() int {
-	return config.iconpadding * 2
-}
-
 /* allocate an item */
 func ItemNew(label, output, imagefile string) *Item {
 	var item Item
 	item.label = label
 	item.output = output
-	item.file = imagefile
 
 	return &item
 }
@@ -295,11 +298,12 @@ func (xmenu *XMenu) NewMenu(level int) *Menu {
 	menu.x = -1
 	menu.y = -1
 	menu.w = menu.xmenu.border_pixels*2 + menu.xmenu.width_pixels
-	menu.h = menu.xmenu.border_pixels * 2
 
 	/* ignoring error as an error only happens with icons */
-	menu.overflowItemTop, _ = menu.makeItem("▲", "", "", AlignCenter)
-	menu.overflowItemBottom, _ = menu.makeItem("▼", "", "", AlignCenter)
+	// menu.overflowItemTop, _ = menu.makeItem("▲", "", "", AlignCenter)
+	// menu.overflowItemBottom, _ = menu.makeItem("▼", "", "", AlignCenter)
+	menu.overflowItemTop = menu.makeOverflow(true)
+	menu.overflowItemBottom = menu.makeOverflow(false)
 
 	return &menu
 }
@@ -344,24 +348,34 @@ func (menu *Menu) makeItem(label, output, imagefile string, align Alignment) (*I
 		return &item, nil
 	}
 
-	/* try to load icon */
-	item.file = imagefile
-	if item.file != "" && !menu.xmenu.iflag {
-		fp, err := os.Open(item.file)
-		if err != nil {
-			return nil, err
-		}
-		defer fp.Close()
-		item.icon, err = png.Decode(fp)
-		if err != nil {
-			return nil, err
-		}
-		item.w += menu.xmenu.iconsize()
-	}
-
 	item.w += menu.xmenu.MessureText(label)
 	item.h = menu.xmenu.font.Metrics().Height.Ceil() + menu.xmenu.padY*2
+
+	/* try to load icon */
+	if imagefile != "" && !menu.xmenu.iflag {
+		var err error
+		item.icon, err = img.Load(imagefile)
+		if err != nil {
+			return nil, err
+		}
+		item.w += menu.xmenu.iconsize + menu.xmenu.padX
+		item.h = max(item.h, menu.xmenu.iconsize+menu.xmenu.padY*2)
+	}
 	return &item, nil
+}
+
+func (menu *Menu) makeOverflow(top bool) *Item {
+	item := Item{
+		parent: menu,
+	}
+
+	item.overflower = OverflowBottom
+	if top {
+		item.overflower = OverflowTop
+	}
+	item.w = topBottomSize.X + menu.xmenu.padX*2
+	item.h = topBottomSize.Y + menu.xmenu.padY*2
+	return &item
 }
 
 func (menu *Menu) append(label, output, imagefile string) error {
@@ -371,13 +385,11 @@ func (menu *Menu) append(label, output, imagefile string) error {
 	}
 	menu.items = append(menu.items, item)
 	menu.itemsChanged = true
-	menu.w = max(menu.w, item.w)
-	menu.h += item.h
 	return nil
 }
 
 func (item *Item) setSubmenu(sub *Menu) {
-	item.w += item.parent.xmenu.triangle_width
+	item.w += leftRightSize.X
 	item.parent.w = max(item.parent.w, item.w)
 	item.submenu = sub
 }
@@ -452,22 +464,25 @@ func (menu *Menu) show(caller *Menu) error {
 
 	if menu.itemsChanged {
 		menu.itemsChanged = false
+		menu.w = 0
 		menu.h = 0
 		menu.first = 0
 		menu.overflow = -1
 
 		for _, item := range menu.items {
+			menu.w = max(menu.w, item.w)
 			menu.h += item.h
 		}
 
 		if menu.h > int(mon.H) {
 			/* both arrow items */
-			menu.h = (menu.xmenu.font.Metrics().Height.Ceil() + menu.xmenu.padY*2) * 2
+			menu.h = (topBottomSize.Y + menu.xmenu.padY*2) * 2
 			for i, item := range menu.items {
 				if item.h+menu.h > int(mon.H) {
 					menu.overflow = i
 					break
 				}
+				menu.w = max(menu.w, item.w)
 				menu.h += item.h
 			}
 		}
@@ -493,6 +508,7 @@ func (menu *Menu) show(caller *Menu) error {
 	} else if menu.x == -1 || menu.y == -1 {
 		curX, curY, _ := sdl.GetGlobalMouseState()
 		menu.x = int(curX)
+		menu.y = 0
 		if menu.overflow == -1 {
 			menu.y = int(curY)
 		}
@@ -538,10 +554,24 @@ func (menu *Menu) drawItem(y int, index int, item *Item) error {
 
 	menu.render.SetDrawColor(color.Foreground.R, color.Foreground.G, color.Foreground.B, color.Foreground.A)
 
-	if item.label != "" {
+	if item.overflower != OverflowNone {
+		pixels := topArrow
+		if item.overflower == OverflowBottom {
+			pixels = bottomArrow
+		}
+
+		x := menu.w/2 - topBottomSize.X/2
+		y := y + item.h/2 - topBottomSize.Y/2
+		for i, pix := range pixels {
+			offx, offy := i%topBottomSize.X, i/topBottomSize.X
+			if pix > 0 {
+				menu.render.DrawPoint(int32(x+offx), int32(y+offy))
+			}
+		}
+	} else if item.label != "" {
 		x := menu.xmenu.padX + menu.xmenu.border_pixels
 		if item.icon != nil {
-			x += menu.xmenu.iconsize()
+			x += menu.xmenu.iconsize + menu.xmenu.padX
 		}
 
 		textH := menu.xmenu.font.Metrics().Height.Ceil()
@@ -564,11 +594,32 @@ func (menu *Menu) drawItem(y int, index int, item *Item) error {
 
 		textY := item.h/2 - textH/2
 		menu.render.Copy(tex, nil, &sdl.Rect{X: int32(x), Y: int32(y + textY), W: int32(textW), H: int32(textH)})
+
+		if item.submenu != nil {
+			x := menu.w - leftRightSize.X - menu.xmenu.border_pixels - menu.xmenu.padX
+			y := y + item.h/2 - leftRightSize.Y/2
+			for i, pix := range rightArrow {
+				offx, offy := i%leftRightSize.X, i/leftRightSize.X
+				if pix > 0 {
+					menu.render.DrawPoint(int32(x+offx), int32(y+offy))
+				}
+			}
+		}
+
+		if item.icon != nil {
+			x := menu.xmenu.border_pixels + menu.xmenu.padX
+			y := y + item.h/2 - menu.xmenu.iconsize/2
+			tex, err := menu.render.CreateTextureFromSurface(item.icon)
+			if err != nil {
+				return err
+			}
+			menu.render.Copy(tex, nil, &sdl.Rect{X: int32(x), Y: int32(y), W: int32(menu.xmenu.iconsize), H: int32(menu.xmenu.iconsize)})
+		}
 	} else {
 		x := menu.xmenu.border_pixels + menu.xmenu.padX + menu.xmenu.separator_pixels
 		y := y + menu.xmenu.padY
 		menu.render.SetDrawColor(menu.xmenu.separator.R, menu.xmenu.separator.G, menu.xmenu.separator.B, menu.xmenu.separator.A)
-		menu.render.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(menu.w - x), H: int32(1)})
+		menu.render.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(menu.w - x*2), H: int32(1)})
 	}
 	return nil
 }
@@ -659,26 +710,28 @@ func (menu *Menu) getitem(target int) int {
 	return -1
 }
 
-func (menu *Menu) isoverflowitem(target int) int {
-	if menu == nil {
-		return -1
+func (menu *Menu) isoverflowitem(target int) OverflowItem {
+	if menu == nil || menu.overflow == -1 {
+		return OverflowNone
 	}
 	y := menu.xmenu.border_pixels
 
-	end := len(menu.items)
-	if menu.overflow != -1 {
-		y += menu.overflowItemTop.h
-		end = menu.first + menu.overflow
+	item := menu.overflowItemTop
+	if y <= target && target < y+item.h {
+		return OverflowTop
 	}
-	for i := menu.first; i < end; i++ {
-		item := menu.items[i]
-		if y <= target && target < y+item.h {
-			return i
-		}
+	y += item.h
+
+	for _, item := range menu.visibleItems(false) {
 		y += item.h
 	}
 
-	return -1
+	item = menu.overflowItemBottom
+	if y <= target && target < y+item.h {
+		return OverflowBottom
+	}
+
+	return OverflowNone
 }
 
 /* cycle through the items; non-zero direction is next, zero is prev */
@@ -799,8 +852,9 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 	var buf []byte
 	var previtem *Item
 	// curmenu.selected := -1
+	var hasleft *time.Timer
 	warped := false
-	running := true
+	var stopped atomic.Bool
 	action := Action(0)
 	enteritem := func(menu *Menu, item int) {
 		if menu.items[item].label == "" {
@@ -811,23 +865,33 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 			curmenu.show(menu)
 		} else {
 			fmt.Printf("%s\n", menu.items[item].output)
-			running = false
+			stopped.Store(true)
 			return
 		}
 		curmenu.selected = 0
 		action = ActionClear | ActionMap | ActionDraw
 	}
-	for running {
-		event := sdl.WaitEvent()
+	for !stopped.Load() {
+		event := sdl.WaitEventTimeout(100)
 		if event == nil {
-			break
+			continue
 		}
 		action = 0
 		switch ev := event.(type) {
 		case *sdl.QuitEvent:
-			running = false
+			stopped.Store(true)
 		case *sdl.WindowEvent:
-			// if (ev.xexpose.count == 0)
+			if ev.Event == sdl.WINDOWEVENT_LEAVE && xmenu.seen {
+				hasleft = time.AfterFunc(100*time.Millisecond, func() {
+					stopped.Store(true)
+				})
+			}
+			if ev.Event == sdl.WINDOWEVENT_ENTER {
+				if hasleft != nil {
+					hasleft.Stop()
+					hasleft = nil
+				}
+			}
 			action = ActionDraw
 		case *sdl.MouseMotionEvent:
 			if warped {
@@ -836,7 +900,7 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 			}
 			menu := rootmenu.getmenu(ev.WindowID)
 			if xmenu.seen && menu == nil {
-				running = false
+				stopped.Store(true)
 				return
 			}
 			item := menu.getitem(int(ev.Y))
@@ -867,22 +931,29 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 				action = ActionClear | ActionDraw | ActionWarp
 			}
 		case *sdl.MouseButtonEvent:
-			//  if (!isclickbutton(xmenu, ev.xbutton.button)) {
-			// break;
-			// }
+			if ev.State != sdl.PRESSED {
+				break
+			}
 			menu := curmenu.getmenu(ev.WindowID)
 			if menu == nil {
-				running = false
+				stopped.Store(true)
 				break
 			}
 			item := menu.getitem(int(ev.Y))
-			if item == -1 {
+			ovitem := menu.isoverflowitem(int(ev.Y))
+			if item == -1 && ovitem == OverflowNone {
 				curmenu.selected = -1
-				menu.first = item
+				menu.first = 0
 				action = ActionClear | ActionMap | ActionDraw
 				break
 			}
-			if item == -1 {
+			if ovitem == OverflowTop {
+				curmenu.first = max(curmenu.first-1, 0)
+				action = ActionClear | ActionMap | ActionDraw
+				break
+			} else if ovitem == OverflowBottom {
+				curmenu.first = min(curmenu.first+1, len(curmenu.items)-curmenu.overflow)
+				action = ActionClear | ActionMap | ActionDraw
 				break
 			}
 			enteritem(menu, item)
@@ -896,7 +967,7 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 
 			/* esc closes xmenu when current menu is the root menu */
 			if ev.Keysym.Sym == sdl.K_ESCAPE && curmenu.caller == nil {
-				running = false
+				stopped.Store(true)
 				break
 			}
 
@@ -969,29 +1040,10 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 				break
 			}
 			break
-			// case LeaveNotify:
-			// 	if xmenu.lflag {
-			// 		running = false
-			// 		break
-			// 	}
-			// 	previtem = NULL
-			// 	curmenu.selected = NULL
-			// 	action = ACTION_CLEAR | ACTION_SELECT | ACTION_DRAW
-			// 	break
-			// case ConfigureNotify:
-			// 	menu = getmenu(rootmenu, ev.xconfigure.window)
-			// 	if menu == NULL {
-			// 		break
-			// 	}
-			// 	menu.x = ev.xconfigure.x
-			// 	menu.y = ev.xconfigure.y
-			// 	break
 		}
 		if action&ActionClear != 0 {
 			buf = buf[:0]
 		}
-		// case (action&ACTION_MAP != 0:
-		// prevmenu = mapmenu(xmenu, rootmenu, prevmenu)
 		if action&ActionDraw != 0 {
 			err := curmenu.draw()
 			if err != nil {
@@ -1003,8 +1055,6 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 			warped = true
 		}
 	}
-	// unmapmenu(xmenu, rootmenu);
-	// ungrab(xmenu);
 }
 
 func main() {
@@ -1037,12 +1087,8 @@ func main() {
 		 * Their values must be less than .height_pixels.
 		 */
 
-		/* geometry of the right-pointing isoceles triangle for submenus */
-		triangle_width:  3,
-		triangle_height: 7,
-
 		/* the icon size is equal to .height_pixels - .iconpadding * 2 */
-		iconpadding: 2,
+		iconsize: 32,
 
 		/* area around the icon, the triangle and the separator */
 		padX: 4,
@@ -1131,9 +1177,6 @@ func main() {
 
 	rootmenu.show(nil)
 
-	// grabpointer(xmenu);
-	// grabkeyboard(xmenu);
-	// mapmenu(xmenu, rootmenu, NULL)
 	xmenu.run(rootmenu)
 	xmenu.firsttime = false
 }
