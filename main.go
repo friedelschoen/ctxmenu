@@ -464,8 +464,8 @@ func (menu *Menu) show(caller *Menu) error {
 
 	if menu.itemsChanged {
 		menu.itemsChanged = false
-		menu.w = 0
-		menu.h = 0
+		menu.w = menu.xmenu.border_pixels*2 + menu.xmenu.width_pixels
+		menu.h = menu.xmenu.border_pixels * 2
 		menu.first = 0
 		menu.overflow = -1
 
@@ -476,7 +476,7 @@ func (menu *Menu) show(caller *Menu) error {
 
 		if menu.h > int(mon.H) {
 			/* both arrow items */
-			menu.h = (topBottomSize.Y + menu.xmenu.padY*2) * 2
+			menu.h = (topBottomSize.Y + menu.xmenu.padY*2 + menu.xmenu.border_pixels) * 2
 			for i, item := range menu.items {
 				if item.h+menu.h > int(mon.H) {
 					menu.overflow = i
