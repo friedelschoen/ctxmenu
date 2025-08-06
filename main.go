@@ -457,7 +457,30 @@ func (menu *Menu) show(caller *Menu) error {
 		caller.hideChildren(menu)
 	}
 
-	mon, err := sdl.GetCurrentDisplayMode(0)
+	display, err := menu.win.GetDisplayIndex()
+	if err != nil {
+		sdl.PumpEvents()
+		x, y, _ := sdl.GetGlobalMouseState()
+		fmt.Printf("cur: %dx%d\n", x, y)
+		nmon, err := sdl.GetNumVideoDisplays()
+		if err != nil || nmon == -1 {
+			display = 0
+		} else {
+			for i := range nmon {
+				mr, err := sdl.GetDisplayBounds(i)
+				if err != nil {
+					continue
+				}
+				if x >= mr.X && x < mr.X+mr.W &&
+					y >= mr.Y && y < mr.Y+mr.H {
+					display = i
+					break
+				}
+			}
+		}
+	}
+
+	mr, err := sdl.GetDisplayBounds(display)
 	if err != nil {
 		return err
 	}
@@ -474,11 +497,11 @@ func (menu *Menu) show(caller *Menu) error {
 			menu.h += item.h
 		}
 
-		if menu.h > int(mon.H) {
+		if menu.h > int(mr.Y+mr.H) {
 			/* both arrow items */
 			menu.h = (topBottomSize.Y + menu.xmenu.padY*2 + menu.xmenu.border_pixels) * 2
 			for i, item := range menu.items {
-				if item.h+menu.h > int(mon.H) {
+				if item.h+menu.h > int(mr.Y+mr.H) {
 					menu.overflow = i
 					break
 				}
@@ -492,7 +515,9 @@ func (menu *Menu) show(caller *Menu) error {
 		menu.caller = caller
 		menu.x = caller.x + caller.w
 
-		if menu.x+menu.w > int(mon.W) {
+		if menu.x < int(mr.X) {
+			menu.x = int(mr.X)
+		} else if menu.x+menu.w > int(mr.X+mr.W) {
 			menu.x = caller.x - menu.w
 		}
 		if menu.overflow == -1 {
@@ -514,11 +539,15 @@ func (menu *Menu) show(caller *Menu) error {
 		}
 	}
 
-	if menu.x+menu.w > int(mon.W) {
-		menu.x = int(mon.W) - menu.w
+	if menu.x < int(mr.X) {
+		menu.x = int(mr.X)
+	} else if menu.x+menu.w > int(mr.X+mr.W) {
+		menu.x = int(mr.X+mr.W) - menu.w
 	}
-	if menu.y+menu.h > int(mon.H) {
-		menu.y = int(mon.H) - menu.h
+	if menu.y < int(mr.Y) {
+		menu.y = int(mr.Y)
+	} else if menu.y+menu.h > int(mr.Y+mr.H) {
+		menu.y = int(mr.Y+mr.H) - menu.h
 	}
 
 	menu.updateWindow()
