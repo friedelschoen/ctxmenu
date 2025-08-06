@@ -777,7 +777,6 @@ func (rootmenu *Menu[T]) Run(hover func(T)) (def T, err error) {
 	if err := rootmenu.show(nil); err != nil {
 		return def, err
 	}
-	sdl.CaptureMouse(true)
 
 	curmenu := rootmenu
 	var buf []byte
@@ -786,7 +785,13 @@ func (rootmenu *Menu[T]) Run(hover func(T)) (def T, err error) {
 	var hasleft *time.Timer
 	warped := false
 	action := Action(0)
+	quit := make(chan struct{})
 	for {
+		select {
+		case <-quit:
+			return def, ErrExited
+		default:
+		}
 		event := sdl.WaitEventTimeout(100)
 		if event == nil {
 			continue
@@ -798,7 +803,7 @@ func (rootmenu *Menu[T]) Run(hover func(T)) (def T, err error) {
 		case *sdl.WindowEvent:
 			if ev.Event == sdl.WINDOWEVENT_LEAVE && rootmenu.ctxmenu.seen {
 				hasleft = time.AfterFunc(100*time.Millisecond, func() {
-					sdl.PushEvent(&sdl.QuitEvent{})
+					quit <- struct{}{}
 				})
 			}
 			if ev.Event == sdl.WINDOWEVENT_ENTER {
