@@ -1,7 +1,6 @@
-package main
+package ctxmenu
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"image"
@@ -12,7 +11,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -54,24 +52,26 @@ type ColorPair struct {
 	Foreground, Background *color.NRGBA
 }
 
-/* Config holds configurations for Xmenu */
+/* Config holds configurations for ctxmenu */
 type Config struct {
-	/* the values below are set by menu.xmenu.h */
-	fontName           string
-	backgroundColor    string
-	foregroundColor    string
-	selbackgroundColor string
-	selforegroundColor string
-	separatorColor     string
-	borderColor        string
+	/* the values below are set by menu.ctxmenu.h */
+	FontName           string
+	BackgroundColor    string
+	ForegroundColor    string
+	SelbackgroundColor string
+	SelforegroundColor string
+	SeparatorColor     string
+	BorderColor        string
 
-	minItemWidth    int
-	borderSize      int
-	seperatorLength int
-	iconSize        int
-	padX, padY      int
-	alignment       Alignment
+	MinItemWidth       int
+	BorderSize         int
+	SeperatorLength    int
+	IconSize           int
+	PaddingX, PaddingY int
+	Alignment          Alignment
 }
+
+var ErrExited = errors.New("window was closed")
 
 type OverflowItem int
 
@@ -84,8 +84,9 @@ const (
 /* Item is an element inside a Menu */
 type Item[T comparable] struct {
 	parent     *Menu[T] /* parent */
-	label      string   /* string to be drawed on menu */
 	output     T        /* string to be outputed when item is clicked */
+	label      string   /* string to be drawed on menu */
+	labeltex   *sdl.Texture
 	submenu    *Menu[T] /* submenu spawned by clicking on item */
 	icon       *sdl.Surface
 	icontex    *sdl.Texture
@@ -96,7 +97,7 @@ type Item[T comparable] struct {
 
 /* Menu is a menu- or submenu-window */
 type Menu[T comparable] struct {
-	xmenu        *XMenu        /* context */
+	ctxmenu      *ContextMenu  /* context */
 	items        []*Item[T]    /* list of items contained by the menu */
 	first        int           /* index of first element, if scrolled */
 	selected     int           /* index of item currently selected in the menu */
@@ -112,7 +113,7 @@ type Menu[T comparable] struct {
 	overflowItemBottom *Item[T]
 }
 
-type XMenu struct {
+type ContextMenu struct {
 	Config
 
 	normal    ColorPair
@@ -240,14 +241,13 @@ func parseColor(s string) (*color.NRGBA, error) {
 }
 
 /* MakeMenu allocates a menu and create its window */
-func MakeMenu[T comparable](xmenu *XMenu) *Menu[T] {
+func MakeMenu[T comparable](ctxmenu *ContextMenu) *Menu[T] {
 	// XSetWindowAttributes swa;
 	menu := Menu[T]{
-		xmenu: xmenu,
+		ctxmenu: ctxmenu,
 	}
 	menu.x = -1
 	menu.y = -1
-	menu.w = menu.xmenu.borderSize*2 + menu.xmenu.minItemWidth
 
 	/* ignoring error as an error only happens with icons */
 	menu.overflowItemTop = menu.makeOverflow(true)
@@ -256,20 +256,20 @@ func MakeMenu[T comparable](xmenu *XMenu) *Menu[T] {
 	return &menu
 }
 
-func (menu *Menu[T]) appendRoot(label string, output T, imagefile string, depth int) error {
+func (menu *Menu[T]) Append(label string, output T, imagefile string, depth int) error {
 	for range depth {
 		if len(menu.items) == 0 {
 			return fmt.Errorf("too much depth")
 		}
 		tail := menu.items[len(menu.items)-1]
 		if tail.submenu == nil {
-			sub := MakeMenu[T](menu.xmenu)
+			sub := MakeMenu[T](menu.ctxmenu)
 			tail.setSubmenu(sub)
 		}
 		menu = tail.submenu
 	}
 
-	err := menu.append(label, output, imagefile)
+	err := menu.AppendItem(label, output, imagefile)
 	if err != nil {
 		return err
 	}
@@ -284,25 +284,25 @@ func (menu *Menu[T]) makeItem(label string, output T, imagefile string) (*Item[T
 		output: output,
 	}
 
-	item.w = menu.xmenu.padX * 2
+	item.w = menu.ctxmenu.PaddingX * 2
 
 	if label == "" {
-		item.h = 1 + menu.xmenu.padY*2
+		item.h = 1 + menu.ctxmenu.PaddingY*2
 		return &item, nil
 	}
 
-	item.w += menu.xmenu.messureText(label)
-	item.h = menu.xmenu.font.Metrics().Height.Ceil() + menu.xmenu.padY*2
+	item.w += menu.ctxmenu.messureText(label)
+	item.h = menu.ctxmenu.font.Metrics().Height.Ceil() + menu.ctxmenu.PaddingY*2
 
 	/* try to load icon */
-	if imagefile != "" && !menu.xmenu.disableIcons {
+	if imagefile != "" && !menu.ctxmenu.disableIcons {
 		var err error
 		item.icon, err = img.Load(imagefile)
 		if err != nil {
 			return nil, err
 		}
-		item.w += menu.xmenu.iconSize + menu.xmenu.padX
-		item.h = max(item.h, menu.xmenu.iconSize+menu.xmenu.padY*2)
+		item.w += menu.ctxmenu.IconSize + menu.ctxmenu.PaddingX
+		item.h = max(item.h, menu.ctxmenu.IconSize+menu.ctxmenu.PaddingY*2)
 	}
 	return &item, nil
 }
@@ -316,12 +316,12 @@ func (menu *Menu[T]) makeOverflow(top bool) *Item[T] {
 	if top {
 		item.overflower = OverflowTop
 	}
-	item.w = topBottomSize.X + menu.xmenu.padX*2
-	item.h = topBottomSize.Y + menu.xmenu.padY*2
+	item.w = topBottomSize.X + menu.ctxmenu.PaddingX*2
+	item.h = topBottomSize.Y + menu.ctxmenu.PaddingY*2
 	return &item
 }
 
-func (menu *Menu[T]) append(label string, output T, imagefile string) error {
+func (menu *Menu[T]) AppendItem(label string, output T, imagefile string) error {
 	item, err := menu.makeItem(label, output, imagefile)
 	if err != nil {
 		return err
@@ -337,34 +337,33 @@ func (item *Item[T]) setSubmenu(sub *Menu[T]) {
 	item.submenu = sub
 }
 
-func (xmenu *XMenu) drawText(dest draw.Image, color color.Color, text string) int {
+func (ctxmenu *ContextMenu) drawText(dest draw.Image, text string) int {
 	var dot fixed.Point26_6
 	dot.X = 0
-	dot.Y = xmenu.font.Metrics().Ascent
+	dot.Y = ctxmenu.font.Metrics().Ascent
 
 	prev := rune(-1)
-	src := image.NewUniform(color)
 	for _, chr := range text {
 		if prev != -1 {
-			dot.X += xmenu.font.Kern(prev, chr)
+			dot.X += ctxmenu.font.Kern(prev, chr)
 		}
 		prev = chr
-		dr, mask, maskp, advance, _ := xmenu.font.Glyph(dot, chr)
-		draw.DrawMask(dest, dr, src, image.Point{}, mask, maskp, draw.Over)
+		dr, mask, maskp, advance, _ := ctxmenu.font.Glyph(dot, chr)
+		draw.DrawMask(dest, dr, image.Opaque, image.Point{}, mask, maskp, draw.Over)
 		dot.X += advance
 	}
 	return dot.X.Ceil()
 }
 
-func (xmenu *XMenu) messureText(text string) int {
+func (ctxmenu *ContextMenu) messureText(text string) int {
 	prev := rune(-1)
 	width := fixed.Int26_6(0)
 	for _, chr := range text {
 		if prev != -1 {
-			width += xmenu.font.Kern(prev, chr)
+			width += ctxmenu.font.Kern(prev, chr)
 		}
 		prev = chr
-		advance, _ := xmenu.font.GlyphAdvance(chr)
+		advance, _ := ctxmenu.font.GlyphAdvance(chr)
 		width += advance
 	}
 	return width.Ceil()
@@ -404,7 +403,6 @@ func (menu *Menu[T]) show(caller *Menu[T]) error {
 	if err != nil {
 		sdl.PumpEvents()
 		x, y, _ := sdl.GetGlobalMouseState()
-		fmt.Printf("cur: %dx%d\n", x, y)
 		nmon, err := sdl.GetNumVideoDisplays()
 		if err != nil || nmon == -1 {
 			display = 0
@@ -430,8 +428,8 @@ func (menu *Menu[T]) show(caller *Menu[T]) error {
 
 	if menu.itemsChanged {
 		menu.itemsChanged = false
-		menu.w = menu.xmenu.borderSize*2 + menu.xmenu.minItemWidth
-		menu.h = menu.xmenu.borderSize * 2
+		menu.w = menu.ctxmenu.BorderSize*2 + menu.ctxmenu.MinItemWidth
+		menu.h = menu.ctxmenu.BorderSize * 2
 		menu.first = 0
 		menu.overflow = -1
 
@@ -442,7 +440,7 @@ func (menu *Menu[T]) show(caller *Menu[T]) error {
 
 		if menu.h > int(mr.Y+mr.H) {
 			/* both arrow items */
-			menu.h = (topBottomSize.Y + menu.xmenu.padY*2 + menu.xmenu.borderSize) * 2
+			menu.h = (topBottomSize.Y + menu.ctxmenu.PaddingY*2 + menu.ctxmenu.BorderSize) * 2
 			for i, item := range menu.items {
 				if item.h+menu.h > int(mr.Y+mr.H) {
 					menu.overflow = i
@@ -512,12 +510,12 @@ func (menu *Menu[T]) hide() {
 
 /* draw overflow button */
 func (menu *Menu[T]) drawItem(y int, index int, item *Item[T]) error {
-	// x := menu.xmenu.vertpadding
-	// y += menu.xmenu.horzpadding
+	// x := menu.ctxmenu.vertpadding
+	// y += menu.ctxmenu.horzpadding
 
-	color := menu.xmenu.normal
+	color := menu.ctxmenu.normal
 	if index != -1 && index == menu.selected {
-		color = menu.xmenu.selected
+		color = menu.ctxmenu.selected
 	}
 
 	menu.render.SetDrawColor(color.Background.R, color.Background.G, color.Background.B, color.Background.A)
@@ -540,34 +538,33 @@ func (menu *Menu[T]) drawItem(y int, index int, item *Item[T]) error {
 			}
 		}
 	} else if item.label != "" {
-		x := menu.xmenu.padX + menu.xmenu.borderSize
+		x := menu.ctxmenu.PaddingX + menu.ctxmenu.BorderSize
 		if item.icon != nil {
-			x += menu.xmenu.iconSize + menu.xmenu.padX
+			x += menu.ctxmenu.IconSize + menu.ctxmenu.PaddingX
 		}
 
-		textH := menu.xmenu.font.Metrics().Height.Ceil()
-		textW := menu.xmenu.messureText(item.label)
-		surf, err := sdl.CreateRGBSurface(0, int32(textW), int32(textH), 32, 0xff000000, 0x00ff0000, 0x0000ff00, 0x000000ff)
-		if err != nil {
-			return err
-		}
-		col := uint32(color.Background.R)<<24 |
-			uint32(color.Background.G)<<16 |
-			uint32(color.Background.B)<<8 |
-			uint32(color.Background.A)<<0
-		surf.FillRect(&sdl.Rect{W: int32(textW), H: int32(textH)}, col)
-		menu.xmenu.drawText(surf, color.Foreground, item.label)
+		textH := menu.ctxmenu.font.Metrics().Height.Ceil()
+		textW := menu.ctxmenu.messureText(item.label)
+		if item.labeltex == nil {
+			surf, err := sdl.CreateRGBSurface(0, int32(textW), int32(textH), 32, 0xff000000, 0x00ff0000, 0x0000ff00, 0x000000ff)
+			if err != nil {
+				return err
+			}
 
-		tex, err := menu.render.CreateTextureFromSurface(surf)
-		if err != nil {
-			return err
-		}
+			surf.FillRect(&sdl.Rect{W: int32(textW), H: int32(textH)}, 0x00)
+			menu.ctxmenu.drawText(surf, item.label)
 
+			item.labeltex, err = menu.render.CreateTextureFromSurface(surf)
+			if err != nil {
+				return err
+			}
+		}
 		textY := item.h/2 - textH/2
-		menu.render.Copy(tex, nil, &sdl.Rect{X: int32(x), Y: int32(y + textY), W: int32(textW), H: int32(textH)})
+		item.labeltex.SetColorMod(color.Foreground.R, color.Foreground.G, color.Foreground.B)
+		menu.render.Copy(item.labeltex, nil, &sdl.Rect{X: int32(x), Y: int32(y + textY), W: int32(textW), H: int32(textH)})
 
 		if item.submenu != nil {
-			x := menu.w - leftRightSize.X - menu.xmenu.borderSize - menu.xmenu.padX
+			x := menu.w - leftRightSize.X - menu.ctxmenu.BorderSize - menu.ctxmenu.PaddingX
 			y := y + item.h/2 - leftRightSize.Y/2
 			for i, pix := range rightArrow {
 				offx, offy := i%leftRightSize.X, i/leftRightSize.X
@@ -579,20 +576,21 @@ func (menu *Menu[T]) drawItem(y int, index int, item *Item[T]) error {
 
 		if item.icon != nil {
 			if item.icontex == nil {
+				var err error
 				item.icontex, err = menu.render.CreateTextureFromSurface(item.icon)
 				if err != nil {
 					return err
 				}
 			}
 
-			x := menu.xmenu.borderSize + menu.xmenu.padX
-			y := y + item.h/2 - menu.xmenu.iconSize/2
-			menu.render.Copy(tex, nil, &sdl.Rect{X: int32(x), Y: int32(y), W: int32(menu.xmenu.iconSize), H: int32(menu.xmenu.iconSize)})
+			x := menu.ctxmenu.BorderSize + menu.ctxmenu.PaddingX
+			y := y + item.h/2 - menu.ctxmenu.IconSize/2
+			menu.render.Copy(item.icontex, nil, &sdl.Rect{X: int32(x), Y: int32(y), W: int32(menu.ctxmenu.IconSize), H: int32(menu.ctxmenu.IconSize)})
 		}
 	} else {
-		x := menu.xmenu.borderSize + menu.xmenu.padX + menu.xmenu.seperatorLength
-		y := y + menu.xmenu.padY
-		menu.render.SetDrawColor(menu.xmenu.separator.R, menu.xmenu.separator.G, menu.xmenu.separator.B, menu.xmenu.separator.A)
+		x := menu.ctxmenu.BorderSize + menu.ctxmenu.PaddingX + menu.ctxmenu.SeperatorLength
+		y := y + menu.ctxmenu.PaddingY
+		menu.render.SetDrawColor(menu.ctxmenu.separator.R, menu.ctxmenu.separator.G, menu.ctxmenu.separator.B, menu.ctxmenu.separator.A)
 		menu.render.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(menu.w - x*2), H: int32(1)})
 	}
 	return nil
@@ -626,16 +624,16 @@ func (menu *Menu[T]) visibleItems(withOverflow bool) iter.Seq2[int, *Item[T]] {
 
 /* draw pixmap for the selected and unselected version of each item on menu */
 func (menu *Menu[T]) draw() error {
-	y := menu.xmenu.borderSize
+	y := menu.ctxmenu.BorderSize
 
 	for i, item := range menu.visibleItems(true) {
 		menu.drawItem(y, i, item)
 		y += item.h
 	}
 
-	menu.render.SetDrawColor(menu.xmenu.border.R, menu.xmenu.border.G, menu.xmenu.border.B, menu.xmenu.border.A)
+	menu.render.SetDrawColor(menu.ctxmenu.border.R, menu.ctxmenu.border.G, menu.ctxmenu.border.B, menu.ctxmenu.border.A)
 	/* draw border */
-	for s := range menu.xmenu.borderSize {
+	for s := range menu.ctxmenu.BorderSize {
 		menu.render.DrawRect(&sdl.Rect{
 			X: int32(s),
 			Y: int32(s),
@@ -669,10 +667,7 @@ func (menu *Menu[T]) getmenu(win uint32) *Menu[T] {
 
 /* get in *ret the item in given menu and position; return 1 if position is on a scroll triangle */
 func (menu *Menu[T]) getitem(target int) int {
-	if menu == nil {
-		return -1
-	}
-	y := menu.xmenu.borderSize
+	y := menu.ctxmenu.BorderSize
 
 	for i, item := range menu.visibleItems(true) {
 		if i != -1 && y <= target && target < y+item.h {
@@ -688,7 +683,7 @@ func (menu *Menu[T]) isoverflowitem(target int) OverflowItem {
 	if menu == nil || menu.overflow == -1 {
 		return OverflowNone
 	}
-	y := menu.xmenu.borderSize
+	y := menu.ctxmenu.BorderSize
 
 	item := menu.overflowItemTop
 	if y <= target && target < y+item.h {
@@ -807,7 +802,7 @@ func (menu *Menu[T]) matchitem(text string, dir int) int {
 }
 
 func (menu *Menu[T]) warp() bool {
-	y := menu.xmenu.borderSize
+	y := menu.ctxmenu.BorderSize
 	for i, item := range menu.visibleItems(true) {
 		if i != -1 && i == menu.selected {
 			y += menu.y + item.h/2
@@ -821,16 +816,20 @@ func (menu *Menu[T]) warp() bool {
 }
 
 /* run event loop */
-func (rootmenu *Menu[T]) run(hover func(T)) (def T, ok bool) {
+func (rootmenu *Menu[T]) Run(hover func(T)) (def T, err error) {
+	if err := rootmenu.show(nil); err != nil {
+		return def, err
+	}
+	sdl.CaptureMouse(true)
+
 	curmenu := rootmenu
 	var buf []byte
 	var previtem *Item[T]
 	// curmenu.selected := -1
 	var hasleft *time.Timer
 	warped := false
-	var stopped atomic.Bool
 	action := Action(0)
-	for !stopped.Load() {
+	for {
 		event := sdl.WaitEventTimeout(100)
 		if event == nil {
 			continue
@@ -838,11 +837,11 @@ func (rootmenu *Menu[T]) run(hover func(T)) (def T, ok bool) {
 		action = 0
 		switch ev := event.(type) {
 		case *sdl.QuitEvent:
-			stopped.Store(true)
+			return def, ErrExited
 		case *sdl.WindowEvent:
-			if ev.Event == sdl.WINDOWEVENT_LEAVE && rootmenu.xmenu.seen {
+			if ev.Event == sdl.WINDOWEVENT_LEAVE && rootmenu.ctxmenu.seen {
 				hasleft = time.AfterFunc(100*time.Millisecond, func() {
-					stopped.Store(true)
+					sdl.PushEvent(&sdl.QuitEvent{})
 				})
 			}
 			if ev.Event == sdl.WINDOWEVENT_ENTER {
@@ -858,27 +857,37 @@ func (rootmenu *Menu[T]) run(hover func(T)) (def T, ok bool) {
 				break
 			}
 			menu := rootmenu.getmenu(ev.WindowID)
-			if rootmenu.xmenu.seen && menu == nil {
-				stopped.Store(true)
-				return
+			if rootmenu.ctxmenu.seen && menu == nil {
+				return def, ErrExited
 			}
-			item := menu.getitem(int(ev.Y))
-			if menu == nil || item == -1 || previtem == menu.items[item] {
-				break
+			if menu == nil {
+				continue
 			}
-			rootmenu.xmenu.seen = true
-			previtem = menu.items[item]
-			menu.selected = item
+			itemidx := menu.getitem(int(ev.Y))
+			if itemidx == -1 {
+				continue
+			}
+			item := menu.items[itemidx]
+			if previtem == item {
+				continue
+			}
+			rootmenu.ctxmenu.seen = true
+			previtem = item
+			if item.label == "" {
+				menu.selected = -1
+			} else {
+				menu.selected = itemidx
+			}
 			menu.draw()
-			if menu.items[item].submenu != nil {
-				curmenu = menu.items[item].submenu
+			if item.submenu != nil {
+				curmenu = item.submenu
 				curmenu.selected = -1
 			} else {
 				curmenu = menu
 			}
 			curmenu.show(menu)
-			if menu.items[item].label != "" && hover != nil {
-				hover(menu.items[item].output)
+			if item.label != "" && hover != nil {
+				hover(item.output)
 			}
 			action = ActionClear | ActionMap | ActionDraw
 		case *sdl.MouseWheelEvent:
@@ -900,8 +909,7 @@ func (rootmenu *Menu[T]) run(hover func(T)) (def T, ok bool) {
 			}
 			menu := curmenu.getmenu(ev.WindowID)
 			if menu == nil {
-				stopped.Store(true)
-				break
+				return def, ErrExited
 			}
 			item := menu.getitem(int(ev.Y))
 			ovitem := menu.isoverflowitem(int(ev.Y))
@@ -927,7 +935,7 @@ func (rootmenu *Menu[T]) run(hover func(T)) (def T, ok bool) {
 				curmenu = menu.items[item].submenu
 				curmenu.show(menu)
 			} else {
-				return menu.items[item].output, true
+				return menu.items[item].output, nil
 			}
 			curmenu.selected = 0
 			action = ActionClear | ActionMap | ActionDraw
@@ -939,10 +947,9 @@ func (rootmenu *Menu[T]) run(hover func(T)) (def T, ok bool) {
 				break
 			}
 
-			/* esc closes xmenu when current menu is the root menu */
+			/* esc closes ctxmenu when current menu is the root menu */
 			if ev.Keysym.Sym == sdl.K_ESCAPE && curmenu.caller == nil {
-				stopped.Store(true)
-				break
+				return def, ErrExited
 			}
 
 			/* cycle through menu */
@@ -995,7 +1002,7 @@ func (rootmenu *Menu[T]) run(hover func(T)) (def T, ok bool) {
 						curmenu = curmenu.items[curmenu.selected].submenu
 						curmenu.show(curmenu)
 					} else {
-						return curmenu.items[curmenu.selected].output, true
+						return curmenu.items[curmenu.selected].output, nil
 					}
 					curmenu.selected = 0
 					action = ActionClear | ActionMap | ActionDraw
@@ -1036,124 +1043,40 @@ func (rootmenu *Menu[T]) run(hover func(T)) (def T, ok bool) {
 			warped = true
 		}
 	}
-	return def, false
 }
 
-func main() {
-	sdl.VideoInit("")
-
-	var xmenu XMenu
-	xmenu.Config = Config{
-		/* font, separate different fonts with comma */
-		fontName: "NotoSansMono-Regular.ttf:size=12",
-
-		/* colors */
-		backgroundColor:    "#FFFFFF",
-		foregroundColor:    "#2E3436",
-		selbackgroundColor: "#3584E4",
-		selforegroundColor: "#FFFFFF",
-		separatorColor:     "#CDC7C2",
-		borderColor:        "#E6E6E6",
-
-		/* sizes in pixels */
-		minItemWidth:    130, /* minimum width of a menu */
-		borderSize:      1,   /* menu border */
-		seperatorLength: 3,   /* space around separator */
-
-		/* text alignment, set to LeftAlignment, CenterAlignment or RightAlignment */
-		alignment: AlignLeft,
-
-		/*
-		 * The variables below cannot be set by X resources.
-		 * Their values must be less than .height_pixels.
-		 */
-
-		/* the icon size is equal to .height_pixels - .iconpadding * 2 */
-		iconSize: 32,
-
-		/* area around the icon, the triangle and the separator */
-		padX: 4,
-		padY: 4,
-	}
-
+func XmenuInit(conf Config) (*ContextMenu, error) {
+	var ctxmenu ContextMenu
 	/* initializers */
 	var err error
-	xmenu.normal.Background, err = parseColor(xmenu.backgroundColor)
+	ctxmenu.Config = conf
+	ctxmenu.normal.Background, err = parseColor(ctxmenu.BackgroundColor)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	xmenu.normal.Foreground, err = parseColor(xmenu.foregroundColor)
+	ctxmenu.normal.Foreground, err = parseColor(ctxmenu.ForegroundColor)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	xmenu.selected.Background, err = parseColor(xmenu.selbackgroundColor)
+	ctxmenu.selected.Background, err = parseColor(ctxmenu.SelbackgroundColor)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	xmenu.selected.Foreground, err = parseColor(xmenu.selforegroundColor)
+	ctxmenu.selected.Foreground, err = parseColor(ctxmenu.SelforegroundColor)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	xmenu.separator, err = parseColor(xmenu.separatorColor)
+	ctxmenu.separator, err = parseColor(ctxmenu.SeparatorColor)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	xmenu.border, err = parseColor(xmenu.borderColor)
+	ctxmenu.border, err = parseColor(ctxmenu.BorderColor)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	xmenu.font, err = parseFontString(xmenu.Config.fontName)
+	ctxmenu.font, err = parseFontString(ctxmenu.Config.FontName)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-
-	rootmenu := MakeMenu[string](&xmenu)
-
-	scan := bufio.NewScanner(os.Stdin)
-	delim := '\t'
-	for scan.Scan() {
-		text := []rune(scan.Text())
-
-		var depth int
-		for len(text) > 0 && text[0] == delim {
-			depth++
-			text = text[1:]
-		}
-		var label, output, imgpath string
-		var fields []string
-		for f := range strings.SplitSeq(string(text), string(delim)) {
-			if f != "" {
-				fields = append(fields, f)
-			}
-		}
-		switch len(fields) {
-		case 0:
-			/* do nothing */
-		case 1:
-			label = fields[0]
-			output = fields[0]
-		case 2:
-			label = fields[0]
-			output = fields[1]
-		case 3:
-			imgpath = fields[0]
-			imgpath = strings.TrimPrefix(imgpath, "IMG:")
-			label = fields[1]
-			output = fields[2]
-		default:
-			panic("too many fields: " + string(text))
-		}
-		if err := rootmenu.appendRoot(label, output, imgpath, depth); err != nil {
-			panic(err)
-		}
-	}
-
-	rootmenu.show(nil)
-
-	res, ok := rootmenu.run(func(s string) {
-		fmt.Printf("\t%s\n", s)
-	})
-	if ok {
-		fmt.Printf("%s\n", res)
-	}
+	return &ctxmenu, err
 }

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-./xmenu -l <<EOF
+cmd/ctxmenu/ctxmenu -l <<EOF
 Applications
 	IMG:./icons/web.png	Web Browser	firefox
 	IMG:./icons/gimp.png	Image editor	gimp

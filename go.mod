@@ -1,4 +1,4 @@
-module github.com/friedelschoen/xmenu
+module github.com/friedelschoen/ctxmenu
 
 go 1.24.5
 
