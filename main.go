@@ -49,32 +49,10 @@ const (
 	AlignRight
 )
 
-var Triangle = image.Gray{
-	Pix: []byte{
-		0xff, 0x00, 0x00, 0x00,
-		0xff, 0xff, 0x00, 0x00,
-		0xff, 0xff, 0xff, 0x00,
-		0xff, 0xff, 0xff, 0xff,
-		0xff, 0xff, 0xff, 0x00,
-		0xff, 0xff, 0x00, 0x00,
-		0xff, 0x00, 0x00, 0x00,
-	},
-	Stride: 4,
-	Rect:   image.Rect(0, 0, 4, 7),
-}
-
 /* color enum */
 type ColorPair struct {
 	Foreground, Background *color.NRGBA
 }
-
-/* EWMH atoms */
-const (
-	NetWMName = iota
-	NetWMWindowType
-	NetWMWindowTypePopupMenu
-	NetLast
-)
 
 /* configuration structure */
 type Config struct {
@@ -91,10 +69,8 @@ type Config struct {
 	separator_pixels    int
 	gap_pixels          int
 	iconsize            int
-	//	horzpadding         int
-	//	vertpadding         int
-	padX, padY int
-	alignment  Alignment
+	padX, padY          int
+	alignment           Alignment
 
 	/* the values below are set by options */
 	monitor    int
@@ -110,11 +86,11 @@ const (
 )
 
 /* menu item structure */
-type Item struct {
-	parent     *Menu  /* parent */
-	label      string /* string to be drawed on menu */
-	output     string /* string to be outputed when item is clicked */
-	submenu    *Menu  /* submenu spawned by clicking on item */
+type Item[T comparable] struct {
+	parent     *Menu[T] /* parent */
+	label      string   /* string to be drawed on menu */
+	output     T        /* string to be outputed when item is clicked */
+	submenu    *Menu[T] /* submenu spawned by clicking on item */
 	icon       *sdl.Surface
 	align      Alignment
 	overflower OverflowItem
@@ -123,9 +99,9 @@ type Item struct {
 }
 
 /* menu structure */
-type Menu struct {
+type Menu[T comparable] struct {
 	xmenu        *XMenu        /* context */
-	items        []*Item       /* list of items contained by the menu */
+	items        []*Item[T]    /* list of items contained by the menu */
 	first        int           /* index of first element, if scrolled */
 	selected     int           /* index of item currently selected in the menu */
 	overflow     int           /* index of first item out of sight, -1 if not overflowing */
@@ -136,11 +112,11 @@ type Menu struct {
 	shown        bool          /* if is menu already active */
 	win          *sdl.Window   /* menu window to map on the screen */
 	render       *sdl.Renderer /* hardware-accelerated renderer */
-	caller       *Menu         /* current parent of this window, nil if root-window */
+	caller       *Menu[T]      /* current parent of this window, nil if root-window */
 	itemsChanged bool          /*  */
 
-	overflowItemTop    *Item
-	overflowItemBottom *Item
+	overflowItemTop    *Item[T]
+	overflowItemBottom *Item[T]
 }
 
 type XMenu struct {
@@ -154,11 +130,10 @@ type XMenu struct {
 	font font.Face
 
 	/* flags */
-	iflag     bool /* whether to disable icons */
-	rflag     bool /* whether to disable right-click */
-	mflag     bool /* whether the user specified a monitor with -p */
-	lflag     bool /* whether to quit if pointer leaves */
-	firsttime bool /* set to 0 after first run */
+	iflag bool /* whether to disable icons */
+	rflag bool /* whether to disable right-click */
+	mflag bool /* whether the user specified a monitor with -p */
+	lflag bool /* whether to quit if pointer leaves */
 
 	posX, posY int /* position to spawn, at cursor -> -1 -1 */
 
@@ -279,19 +254,10 @@ func parseColor(s string) (*color.NRGBA, error) {
 	}, nil
 }
 
-/* allocate an item */
-func ItemNew(label, output, imagefile string) *Item {
-	var item Item
-	item.label = label
-	item.output = output
-
-	return &item
-}
-
 /* allocate a menu and create its window */
-func (xmenu *XMenu) NewMenu(level int) *Menu {
+func MakeMenu[T comparable](xmenu *XMenu, level int) *Menu[T] {
 	// XSetWindowAttributes swa;
-	menu := Menu{
+	menu := Menu[T]{
 		xmenu: xmenu,
 		level: level,
 	}
@@ -300,22 +266,20 @@ func (xmenu *XMenu) NewMenu(level int) *Menu {
 	menu.w = menu.xmenu.border_pixels*2 + menu.xmenu.width_pixels
 
 	/* ignoring error as an error only happens with icons */
-	// menu.overflowItemTop, _ = menu.makeItem("▲", "", "", AlignCenter)
-	// menu.overflowItemBottom, _ = menu.makeItem("▼", "", "", AlignCenter)
 	menu.overflowItemTop = menu.makeOverflow(true)
 	menu.overflowItemBottom = menu.makeOverflow(false)
 
 	return &menu
 }
 
-func (menu *Menu) appendRoot(label, output, imagefile string, depth int) error {
+func (menu *Menu[T]) appendRoot(label string, output T, imagefile string, depth int) error {
 	for d := range depth {
 		if len(menu.items) == 0 {
 			return fmt.Errorf("too much depth")
 		}
 		tail := menu.items[len(menu.items)-1]
 		if tail.submenu == nil {
-			sub := menu.xmenu.NewMenu(d)
+			sub := MakeMenu[T](menu.xmenu, d)
 			tail.setSubmenu(sub)
 		}
 		menu = tail.submenu
@@ -329,12 +293,8 @@ func (menu *Menu) appendRoot(label, output, imagefile string, depth int) error {
 	return nil
 }
 
-func (menu *Menu) makeItem(label, output, imagefile string, align Alignment) (*Item, error) {
-	if output == "" {
-		output = label
-	}
-
-	item := Item{
+func (menu *Menu[T]) makeItem(label string, output T, imagefile string, align Alignment) (*Item[T], error) {
+	item := Item[T]{
 		parent: menu,
 		label:  label,
 		output: output,
@@ -364,8 +324,8 @@ func (menu *Menu) makeItem(label, output, imagefile string, align Alignment) (*I
 	return &item, nil
 }
 
-func (menu *Menu) makeOverflow(top bool) *Item {
-	item := Item{
+func (menu *Menu[T]) makeOverflow(top bool) *Item[T] {
+	item := Item[T]{
 		parent: menu,
 	}
 
@@ -378,7 +338,7 @@ func (menu *Menu) makeOverflow(top bool) *Item {
 	return &item
 }
 
-func (menu *Menu) append(label, output, imagefile string) error {
+func (menu *Menu[T]) append(label string, output T, imagefile string) error {
 	item, err := menu.makeItem(label, output, imagefile, AlignLeft)
 	if err != nil {
 		return err
@@ -388,7 +348,7 @@ func (menu *Menu) append(label, output, imagefile string) error {
 	return nil
 }
 
-func (item *Item) setSubmenu(sub *Menu) {
+func (item *Item[T]) setSubmenu(sub *Menu[T]) {
 	item.w += leftRightSize.X
 	item.parent.w = max(item.parent.w, item.w)
 	item.submenu = sub
@@ -427,7 +387,7 @@ func (xmenu *XMenu) MessureText(text string) int {
 	return width.Ceil()
 }
 
-func (menu *Menu) updateWindow() error {
+func (menu *Menu[T]) updateWindow() error {
 	var err error
 	if menu.win == nil {
 		menu.win, err = sdl.CreateWindow("menu", int32(menu.x), int32(menu.y), int32(menu.w), int32(menu.h), sdl.WINDOW_SHOWN|sdl.WINDOW_POPUP_MENU)
@@ -448,7 +408,7 @@ func (menu *Menu) updateWindow() error {
 }
 
 /* setup the position of a menu */
-func (menu *Menu) show(caller *Menu) error {
+func (menu *Menu[T]) show(caller *Menu[T]) error {
 	if caller == menu {
 		caller = nil
 	}
@@ -554,7 +514,7 @@ func (menu *Menu) show(caller *Menu) error {
 	return nil
 }
 
-func (menu *Menu) hideChildren(except *Menu) {
+func (menu *Menu[T]) hideChildren(except *Menu[T]) {
 	for _, item := range menu.items {
 		if item.submenu != nil && item.submenu != except {
 			item.submenu.hide()
@@ -562,14 +522,14 @@ func (menu *Menu) hideChildren(except *Menu) {
 	}
 }
 
-func (menu *Menu) hide() {
+func (menu *Menu[T]) hide() {
 	menu.hideChildren(nil)
 	menu.win.Hide()
 	menu.shown = false
 }
 
 /* draw overflow button */
-func (menu *Menu) drawItem(y int, index int, item *Item) error {
+func (menu *Menu[T]) drawItem(y int, index int, item *Item[T]) error {
 	// x := menu.xmenu.vertpadding
 	// y += menu.xmenu.horzpadding
 
@@ -653,8 +613,8 @@ func (menu *Menu) drawItem(y int, index int, item *Item) error {
 	return nil
 }
 
-func (menu *Menu) visibleItems(withOverflow bool) iter.Seq2[int, *Item] {
-	return func(yield func(int, *Item) bool) {
+func (menu *Menu[T]) visibleItems(withOverflow bool) iter.Seq2[int, *Item[T]] {
+	return func(yield func(int, *Item[T]) bool) {
 		if withOverflow && menu.overflow != -1 {
 			if !yield(-1, menu.overflowItemTop) {
 				return
@@ -680,7 +640,7 @@ func (menu *Menu) visibleItems(withOverflow bool) iter.Seq2[int, *Item] {
 }
 
 /* draw pixmap for the selected and unselected version of each item on menu */
-func (menu *Menu) draw() error {
+func (menu *Menu[T]) draw() error {
 	y := menu.xmenu.border_pixels
 
 	for i, item := range menu.visibleItems(true) {
@@ -703,7 +663,7 @@ func (menu *Menu) draw() error {
 }
 
 /* get menu of given window */
-func (menu *Menu) getmenu(win uint32) *Menu {
+func (menu *Menu[T]) getmenu(win uint32) *Menu[T] {
 	if menu == nil {
 		return nil
 	}
@@ -723,7 +683,7 @@ func (menu *Menu) getmenu(win uint32) *Menu {
 }
 
 /* get in *ret the item in given menu and position; return 1 if position is on a scroll triangle */
-func (menu *Menu) getitem(target int) int {
+func (menu *Menu[T]) getitem(target int) int {
 	if menu == nil {
 		return -1
 	}
@@ -739,7 +699,7 @@ func (menu *Menu) getitem(target int) int {
 	return -1
 }
 
-func (menu *Menu) isoverflowitem(target int) OverflowItem {
+func (menu *Menu[T]) isoverflowitem(target int) OverflowItem {
 	if menu == nil || menu.overflow == -1 {
 		return OverflowNone
 	}
@@ -764,7 +724,7 @@ func (menu *Menu) isoverflowitem(target int) OverflowItem {
 }
 
 /* cycle through the items; non-zero direction is next, zero is prev */
-func (menu *Menu) itemcycle(direction int) int {
+func (menu *Menu[T]) itemcycle(direction int) int {
 	/* menu.selected item (either separator or labeled item) in given direction */
 	item := -1
 	switch direction {
@@ -810,7 +770,7 @@ func (menu *Menu) itemcycle(direction int) int {
 }
 
 /* get item in menu matching text from given direction (or from beginning, if dir = 0) */
-func matchitem(menu *Menu, text string, dir int) int {
+func (menu *Menu[T]) matchitem(text string, dir int) int {
 	// struct Item *item, *lastitem;
 	dirinc := 0
 	switch {
@@ -861,7 +821,7 @@ func matchitem(menu *Menu, text string, dir int) int {
 	return -1
 }
 
-func (menu *Menu) warp() bool {
+func (menu *Menu[T]) warp() bool {
 	y := menu.xmenu.border_pixels
 	for i, item := range menu.visibleItems(true) {
 		if i != -1 && i == menu.selected {
@@ -876,30 +836,15 @@ func (menu *Menu) warp() bool {
 }
 
 /* run event loop */
-func (xmenu *XMenu) run(rootmenu *Menu) {
+func (rootmenu *Menu[T]) run(hover func(T)) (def T, ok bool) {
 	curmenu := rootmenu
 	var buf []byte
-	var previtem *Item
+	var previtem *Item[T]
 	// curmenu.selected := -1
 	var hasleft *time.Timer
 	warped := false
 	var stopped atomic.Bool
 	action := Action(0)
-	enteritem := func(menu *Menu, item int) {
-		if menu.items[item].label == "" {
-			return /* ignore separators */
-		}
-		if menu.items[item].submenu != nil {
-			curmenu = menu.items[item].submenu
-			curmenu.show(menu)
-		} else {
-			fmt.Printf("%s\n", menu.items[item].output)
-			stopped.Store(true)
-			return
-		}
-		curmenu.selected = 0
-		action = ActionClear | ActionMap | ActionDraw
-	}
 	for !stopped.Load() {
 		event := sdl.WaitEventTimeout(100)
 		if event == nil {
@@ -910,7 +855,7 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 		case *sdl.QuitEvent:
 			stopped.Store(true)
 		case *sdl.WindowEvent:
-			if ev.Event == sdl.WINDOWEVENT_LEAVE && xmenu.seen {
+			if ev.Event == sdl.WINDOWEVENT_LEAVE && rootmenu.xmenu.seen {
 				hasleft = time.AfterFunc(100*time.Millisecond, func() {
 					stopped.Store(true)
 				})
@@ -928,7 +873,7 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 				break
 			}
 			menu := rootmenu.getmenu(ev.WindowID)
-			if xmenu.seen && menu == nil {
+			if rootmenu.xmenu.seen && menu == nil {
 				stopped.Store(true)
 				return
 			}
@@ -936,7 +881,7 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 			if menu == nil || item == -1 || previtem == menu.items[item] {
 				break
 			}
-			xmenu.seen = true
+			rootmenu.xmenu.seen = true
 			previtem = menu.items[item]
 			menu.selected = item
 			menu.draw()
@@ -947,8 +892,8 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 				curmenu = menu
 			}
 			curmenu.show(menu)
-			if menu.items[item].output != "" {
-				fmt.Printf("\t%s\n", menu.items[item].output)
+			if menu.items[item].label != "" && hover != nil {
+				hover(menu.items[item].output)
 			}
 			action = ActionClear | ActionMap | ActionDraw
 		case *sdl.MouseWheelEvent:
@@ -990,7 +935,17 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 				action = ActionClear | ActionMap | ActionDraw
 				break
 			}
-			enteritem(menu, item)
+			if menu.items[item].label == "" {
+				return /* ignore separators */
+			}
+			if menu.items[item].submenu != nil {
+				curmenu = menu.items[item].submenu
+				curmenu.show(menu)
+			} else {
+				return menu.items[item].output, true
+			}
+			curmenu.selected = 0
+			action = ActionClear | ActionMap | ActionDraw
 			if ev.Button == sdl.BUTTON_MIDDLE {
 				action |= ActionWarp
 			}
@@ -1018,7 +973,7 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 			case sdl.K_TAB:
 				if ev.Keysym.Mod&sdl.KMOD_SHIFT > 0 {
 					if len(buf) > 0 {
-						curmenu.selected = matchitem(curmenu, string(buf), -1)
+						curmenu.selected = curmenu.matchitem(string(buf), -1)
 						action = ActionDraw
 						break
 					}
@@ -1026,7 +981,7 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 					action = ActionClear | ActionDraw
 				} else {
 					if len(buf) > 0 {
-						curmenu.selected = matchitem(curmenu, string(buf), 1)
+						curmenu.selected = curmenu.matchitem(string(buf), 1)
 						action = ActionDraw
 						break
 					}
@@ -1049,7 +1004,17 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 				action = ActionClear | ActionDraw
 			case sdl.K_RETURN, sdl.K_RIGHT:
 				if curmenu.selected != -1 {
-					enteritem(curmenu, curmenu.selected)
+					if curmenu.items[curmenu.selected].label == "" {
+						return /* ignore separators */
+					}
+					if curmenu.items[curmenu.selected].submenu != nil {
+						curmenu = curmenu.items[curmenu.selected].submenu
+						curmenu.show(curmenu)
+					} else {
+						return curmenu.items[curmenu.selected].output, true
+					}
+					curmenu.selected = 0
+					action = ActionClear | ActionMap | ActionDraw
 				}
 			case sdl.K_ESCAPE, sdl.K_LEFT:
 				if curmenu.caller != nil {
@@ -1065,7 +1030,7 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 				}
 				for range 2 {
 					buf = append(buf, byte(ev.Keysym.Sym))
-					if curmenu.selected = matchitem(curmenu, string(buf), 0); curmenu.selected != -1 {
+					if curmenu.selected = curmenu.matchitem(string(buf), 0); curmenu.selected != -1 {
 						break
 					}
 					buf = buf[:0]
@@ -1089,6 +1054,7 @@ func (xmenu *XMenu) run(rootmenu *Menu) {
 			warped = true
 		}
 	}
+	return def, false
 }
 
 func main() {
@@ -1129,13 +1095,6 @@ func main() {
 		padY: 4,
 	}
 
-	xmenu.firsttime = true
-	/* process configuration and window class */
-	// getresources(xmenu); // parse config
-	// getoptions(xmenu, argc, argv)
-
-	/* imlib2 stuff */
-
 	/* initializers */
 	var err error
 	xmenu.normal.Background, err = parseColor(xmenu.background_color)
@@ -1167,7 +1126,7 @@ func main() {
 		panic(err)
 	}
 
-	rootmenu := xmenu.NewMenu(0)
+	rootmenu := MakeMenu[string](&xmenu, 0)
 
 	scan := bufio.NewScanner(os.Stdin)
 	delim := '\t'
@@ -1191,6 +1150,7 @@ func main() {
 			/* do nothing */
 		case 1:
 			label = fields[0]
+			output = fields[0]
 		case 2:
 			label = fields[0]
 			output = fields[1]
@@ -1211,6 +1171,10 @@ func main() {
 
 	rootmenu.show(nil)
 
-	xmenu.run(rootmenu)
-	xmenu.firsttime = false
+	res, ok := rootmenu.run(func(s string) {
+		fmt.Printf("\t%s\n", s)
+	})
+	if ok {
+		fmt.Printf("%s\n", res)
+	}
 }
