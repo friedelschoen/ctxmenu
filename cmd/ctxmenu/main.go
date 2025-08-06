@@ -16,7 +16,7 @@ func main() {
 
 	xmenu, err := ctxmenu.XmenuInit(ctxmenu.Config{
 		/* font, separate different fonts with comma */
-		FontName: "NotoSansMono-Regular.ttf:size=12",
+		FontName: "monospace:size=12",
 
 		/* colors */
 		BackgroundColor:    "#FFFFFF",

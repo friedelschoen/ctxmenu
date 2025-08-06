@@ -8,9 +8,7 @@ import (
 	"image/draw"
 	"iter"
 	"os"
-	"path"
 	"strconv"
-	"strings"
 	"time"
 	"unicode"
 
@@ -130,61 +128,20 @@ type ContextMenu struct {
 }
 
 func parseFontString(s string) (font.Face, error) {
-	fields := strings.Split(s, ":")
-	s = fields[0]
-	options := make(map[string]string)
-	for _, pair := range fields[1:] {
-		key, value, _ := strings.Cut(pair, "=")
-		options[key] = value
+	path, opts, err := FontMatch(s)
+	if err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	fnt, err := opentype.Parse(content)
+	if err != nil {
+		return nil, err
 	}
 
-	for spath := range strings.SplitSeq(os.Getenv("FONTPATH"), ":") {
-		content, err := os.ReadFile(path.Join(spath, s))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		fnt, err := opentype.Parse(content)
-		if err != nil {
-			return nil, err
-		}
-		opts := opentype.FaceOptions{
-			DPI:     72,
-			Size:    12,
-			Hinting: font.HintingNone,
-		}
-		if dpistr, ok := options["dpi"]; ok {
-			var err error
-			opts.DPI, err = strconv.ParseFloat(dpistr, 64)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if sizestr, ok := options["size"]; ok {
-			var err error
-			opts.Size, err = strconv.ParseFloat(sizestr, 64)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if hintstr, ok := options["hinting"]; ok {
-			switch hintstr {
-			case "none":
-				opts.Hinting = font.HintingNone
-			case "full":
-				opts.Hinting = font.HintingFull
-			case "vertical":
-				opts.Hinting = font.HintingVertical
-			default:
-				return nil, fmt.Errorf("invalid hinting: %s", hintstr)
-			}
-		}
-
-		return opentype.NewFace(fnt, &opts)
-	}
-	return nil, os.ErrNotExist
+	return opentype.NewFace(fnt, opts)
 }
 
 func parseColor(s string) (*color.NRGBA, error) {
