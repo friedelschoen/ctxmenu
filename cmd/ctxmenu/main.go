@@ -40,7 +40,7 @@ func main() {
 		 */
 
 		/* the icon size is equal to .height_pixels - .iconpadding * 2 */
-		IconSize: 32,
+		IconSize: 24,
 
 		/* area around the icon, the triangle and the separator */
 		PaddingX: 4,
