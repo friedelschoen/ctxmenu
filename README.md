@@ -16,7 +16,7 @@ Library and Program for displaying context-menus. It's based on [xmenu](https://
 ### Requisite
 
 * [**Go**](https://go.dev/doc/install) - The Go Compiler
-* [**SDL2**](https://wiki.libsdl.org/SDL2/Installation) - A Graphics library
+* [**SDL2**](https://wiki.libsdl.org/SDL2/Installation) and [**SDL2_image**](https://github.com/libsdl-org/SDL_image/tree/SDL2) - A Graphics library
 * [**FontConfig**](https://www.freedesktop.org/wiki/Software/fontconfig/) - Find fonts and font-settings (`fc-match`)
 
 ### Install using `go install`
