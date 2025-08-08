@@ -6,13 +6,19 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
+	"io"
 	"iter"
 	"os"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 	"unicode"
 
-	"github.com/veandco/go-sdl2/img"
+	"github.com/KononK/resize"
 	"github.com/veandco/go-sdl2/sdl"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
@@ -84,10 +90,9 @@ type Item[T comparable] struct {
 	parent     *Menu[T] /* parent */
 	output     T        /* string to be outputed when item is clicked */
 	label      string   /* string to be drawed on menu */
-	labeltex   *sdl.Texture
+	labeltex   draw.Image
 	submenu    *Menu[T] /* submenu spawned by clicking on item */
-	icon       *sdl.Surface
-	icontex    *sdl.Texture
+	icon       image.Image
 	overflower OverflowItem
 
 	w, h int /* item geometry */
@@ -95,17 +100,17 @@ type Item[T comparable] struct {
 
 /* Menu is a menu- or submenu-window */
 type Menu[T comparable] struct {
-	ctxmenu      *ContextMenu  /* context */
-	items        []*Item[T]    /* list of items contained by the menu */
-	first        int           /* index of first element, if scrolled */
-	selected     int           /* index of item currently selected in the menu */
-	overflow     int           /* index of first item out of sight, -1 if not overflowing */
-	x, y         int           /* menu position */
-	w, h         int           /* geometry */
-	win          *sdl.Window   /* menu window to map on the screen */
-	render       *sdl.Renderer /* hardware-accelerated renderer */
-	caller       *Menu[T]      /* current parent of this window, nil if root-window */
-	itemsChanged bool          /*  */
+	ctxmenu      *ContextMenu /* context */
+	items        []*Item[T]   /* list of items contained by the menu */
+	first        int          /* index of first element, if scrolled */
+	selected     int          /* index of item currently selected in the menu */
+	overflow     int          /* index of first item out of sight, -1 if not overflowing */
+	x, y         int          /* menu position */
+	w, h         int          /* geometry */
+	win          *sdl.Window  /* menu window to map on the screen */
+	surf         draw.Image   /* hardware-accelerated renderer */
+	caller       *Menu[T]     /* current parent of this window, nil if root-window */
+	itemsChanged bool         /*  */
 
 	overflowItemTop    *Item[T]
 	overflowItemBottom *Item[T]
@@ -234,6 +239,20 @@ func (menu *Menu[T]) Append(label string, output T, imagefile string, depth int)
 	return nil
 }
 
+func getDecoder(imagepath string) (func(io.Reader) (image.Image, error), error) {
+	ext := strings.ToLower(path.Ext(imagepath))
+	switch ext {
+	case ".png":
+		return png.Decode, nil
+	case ".jpg", ".jpeg":
+		return jpeg.Decode, nil
+	case ".gif":
+		return gif.Decode, nil
+	default:
+		return nil, fmt.Errorf("unknown image format: %s", ext)
+	}
+}
+
 func (menu *Menu[T]) makeItem(label string, output T, imagefile string) (*Item[T], error) {
 	item := Item[T]{
 		parent: menu,
@@ -253,11 +272,21 @@ func (menu *Menu[T]) makeItem(label string, output T, imagefile string) (*Item[T
 
 	/* try to load icon */
 	if imagefile != "" && !menu.ctxmenu.disableIcons {
-		var err error
-		item.icon, err = img.Load(imagefile)
+		dec, err := getDecoder(imagefile)
 		if err != nil {
 			return nil, err
 		}
+
+		r, err := os.Open(imagefile)
+		if err != nil {
+			return nil, err
+		}
+		img, err := dec(r)
+		if err != nil {
+			return nil, err
+		}
+
+		item.icon = resize.Resize(uint(menu.ctxmenu.IconSize), uint(menu.ctxmenu.IconSize), img, resize.Bilinear)
 		item.w += menu.ctxmenu.IconSize + menu.ctxmenu.PaddingX
 		item.h = max(item.h, menu.ctxmenu.IconSize+menu.ctxmenu.PaddingY*2)
 	}
@@ -273,8 +302,8 @@ func (menu *Menu[T]) makeOverflow(top bool) *Item[T] {
 	if top {
 		item.overflower = OverflowTop
 	}
-	item.w = topBottomSize.X + menu.ctxmenu.PaddingX*2
-	item.h = topBottomSize.Y + menu.ctxmenu.PaddingY*2
+	item.w = bottomArrow.Rect.Max.X + menu.ctxmenu.PaddingX*2
+	item.h = bottomArrow.Rect.Max.Y + menu.ctxmenu.PaddingY*2
 	return &item
 }
 
@@ -289,7 +318,7 @@ func (menu *Menu[T]) AppendItem(label string, output T, imagefile string) error 
 }
 
 func (item *Item[T]) setSubmenu(sub *Menu[T]) {
-	item.w += leftRightSize.X
+	item.w += rightArrow.Rect.Max.X
 	item.parent.w = max(item.parent.w, item.w)
 	item.submenu = sub
 }
@@ -306,7 +335,7 @@ func (ctxmenu *ContextMenu) drawText(dest draw.Image, text string) int {
 		}
 		prev = chr
 		dr, mask, maskp, advance, _ := ctxmenu.font.Glyph(dot, chr)
-		draw.DrawMask(dest, dr, image.Opaque, image.Point{}, mask, maskp, draw.Over)
+		draw.DrawMask(dest, dr, image.Opaque, image.Point{}, mask, maskp, draw.Src)
 		dot.X += advance
 	}
 	return dot.X.Ceil()
@@ -333,7 +362,7 @@ func (menu *Menu[T]) updateWindow() error {
 		if err != nil {
 			return err
 		}
-		menu.render, err = sdl.CreateRenderer(menu.win, -1, sdl.RENDERER_ACCELERATED)
+		menu.surf, err = menu.win.GetSurface()
 		if err != nil {
 			return err
 		}
@@ -397,7 +426,7 @@ func (menu *Menu[T]) show(caller *Menu[T]) error {
 
 		if menu.h > int(mr.Y+mr.H) {
 			/* both arrow items */
-			menu.h = (topBottomSize.Y + menu.ctxmenu.PaddingY*2 + menu.ctxmenu.BorderSize) * 2
+			menu.h = (bottomArrow.Rect.Max.Y + menu.ctxmenu.PaddingY*2 + menu.ctxmenu.BorderSize) * 2
 			for i, item := range menu.items {
 				if item.h+menu.h > int(mr.Y+mr.H) {
 					menu.overflow = i
@@ -475,10 +504,9 @@ func (menu *Menu[T]) drawItem(y int, index int, item *Item[T]) error {
 		color = menu.ctxmenu.selected
 	}
 
-	menu.render.SetDrawColor(color.Background.R, color.Background.G, color.Background.B, color.Background.A)
-	menu.render.FillRect(&sdl.Rect{X: 0, Y: int32(y), W: int32(menu.w), H: int32(item.h)})
+	img := &SubImage{menu.surf, image.Rect(0, y, menu.w, y+item.h)}
 
-	menu.render.SetDrawColor(color.Foreground.R, color.Foreground.G, color.Foreground.B, color.Foreground.A)
+	draw.Draw(img, img.Bounds(), image.NewUniform(color.Background), image.Point{}, draw.Src)
 
 	if item.overflower != OverflowNone {
 		pixels := topArrow
@@ -486,14 +514,10 @@ func (menu *Menu[T]) drawItem(y int, index int, item *Item[T]) error {
 			pixels = bottomArrow
 		}
 
-		x := menu.w/2 - topBottomSize.X/2
-		y := y + item.h/2 - topBottomSize.Y/2
-		for i, pix := range pixels {
-			offx, offy := i%topBottomSize.X, i/topBottomSize.X
-			if pix > 0 {
-				menu.render.DrawPoint(int32(x+offx), int32(y+offy))
-			}
-		}
+		x := menu.w/2 - bottomArrow.Rect.Max.X/2
+		y := item.h/2 - bottomArrow.Rect.Max.Y/2
+
+		draw.DrawMask(img, pixels.Bounds().Add(image.Point{x, y}), image.NewUniform(color.Foreground), image.Point{}, pixels, image.Point{}, draw.Over)
 	} else if item.label != "" {
 		x := menu.ctxmenu.PaddingX + menu.ctxmenu.BorderSize
 		if item.icon != nil {
@@ -503,52 +527,28 @@ func (menu *Menu[T]) drawItem(y int, index int, item *Item[T]) error {
 		textH := menu.ctxmenu.font.Metrics().Height.Ceil()
 		textW := menu.ctxmenu.messureText(item.label)
 		if item.labeltex == nil {
-			surf, err := sdl.CreateRGBSurface(0, int32(textW), int32(textH), 32, 0xff000000, 0x00ff0000, 0x0000ff00, 0x000000ff)
-			if err != nil {
-				return err
-			}
-
-			surf.FillRect(&sdl.Rect{W: int32(textW), H: int32(textH)}, 0x00)
-			menu.ctxmenu.drawText(surf, item.label)
-
-			item.labeltex, err = menu.render.CreateTextureFromSurface(surf)
-			if err != nil {
-				return err
-			}
+			item.labeltex = image.NewAlpha(image.Rect(0, 0, textW, textH))
+			menu.ctxmenu.drawText(item.labeltex, item.label)
 		}
 		textY := item.h/2 - textH/2
-		item.labeltex.SetColorMod(color.Foreground.R, color.Foreground.G, color.Foreground.B)
-		menu.render.Copy(item.labeltex, nil, &sdl.Rect{X: int32(x), Y: int32(y + textY), W: int32(textW), H: int32(textH)})
+
+		draw.DrawMask(img, item.labeltex.Bounds().Add(image.Point{x, textY}), image.NewUniform(color.Foreground), image.Point{}, item.labeltex, image.Point{}, draw.Over)
 
 		if item.submenu != nil {
-			x := menu.w - leftRightSize.X - menu.ctxmenu.BorderSize - menu.ctxmenu.PaddingX
-			y := y + item.h/2 - leftRightSize.Y/2
-			for i, pix := range rightArrow {
-				offx, offy := i%leftRightSize.X, i/leftRightSize.X
-				if pix > 0 {
-					menu.render.DrawPoint(int32(x+offx), int32(y+offy))
-				}
-			}
+			x := menu.w - rightArrow.Rect.Max.X - menu.ctxmenu.BorderSize - menu.ctxmenu.PaddingX
+			y := item.h/2 - rightArrow.Rect.Max.Y/2
+			draw.DrawMask(img, rightArrow.Bounds().Add(image.Point{x, y}), image.NewUniform(color.Foreground), image.Point{}, rightArrow, image.Point{}, draw.Over)
 		}
 
 		if item.icon != nil {
-			if item.icontex == nil {
-				var err error
-				item.icontex, err = menu.render.CreateTextureFromSurface(item.icon)
-				if err != nil {
-					return err
-				}
-			}
-
 			x := menu.ctxmenu.BorderSize + menu.ctxmenu.PaddingX
-			y := y + item.h/2 - menu.ctxmenu.IconSize/2
-			menu.render.Copy(item.icontex, nil, &sdl.Rect{X: int32(x), Y: int32(y), W: int32(menu.ctxmenu.IconSize), H: int32(menu.ctxmenu.IconSize)})
+			y := item.h/2 - menu.ctxmenu.IconSize/2
+			draw.Draw(img, image.Rect(x, y, x+menu.ctxmenu.IconSize, y+menu.ctxmenu.IconSize), item.icon, image.Point{}, draw.Over)
 		}
 	} else {
 		x := menu.ctxmenu.BorderSize + menu.ctxmenu.PaddingX + menu.ctxmenu.SeperatorLength
-		y := y + menu.ctxmenu.PaddingY
-		menu.render.SetDrawColor(menu.ctxmenu.separator.R, menu.ctxmenu.separator.G, menu.ctxmenu.separator.B, menu.ctxmenu.separator.A)
-		menu.render.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(menu.w - x*2), H: int32(1)})
+		y := menu.ctxmenu.PaddingY
+		draw.Draw(img, image.Rect(x, y, x+menu.w-x*2, y+1), image.NewUniform(menu.ctxmenu.separator), image.Point{}, draw.Src)
 	}
 	return nil
 }
@@ -588,17 +588,20 @@ func (menu *Menu[T]) draw() error {
 		y += item.h
 	}
 
-	menu.render.SetDrawColor(menu.ctxmenu.border.R, menu.ctxmenu.border.G, menu.ctxmenu.border.B, menu.ctxmenu.border.A)
-	/* draw border */
-	for s := range menu.ctxmenu.BorderSize {
-		menu.render.DrawRect(&sdl.Rect{
-			X: int32(s),
-			Y: int32(s),
-			W: int32(menu.w - s*2),
-			H: int32(menu.h - s*2),
-		})
-	}
-	menu.render.Present()
+	bw := menu.ctxmenu.BorderSize
+	/* top */
+	draw.Draw(menu.surf, image.Rect(0, 0, menu.w, bw), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
+
+	/* bottom */
+	draw.Draw(menu.surf, image.Rect(0, menu.h-bw, menu.w, menu.h), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
+
+	/* left */
+	draw.Draw(menu.surf, image.Rect(0, 0, bw, menu.h), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
+
+	/* right */
+	draw.Draw(menu.surf, image.Rect(menu.w-bw, 0, menu.w, menu.h), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
+
+	menu.win.UpdateSurface()
 	return nil
 }
 
