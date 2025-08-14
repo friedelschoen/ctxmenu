@@ -33,6 +33,8 @@
 package proto
 
 import runtime "github.com/friedelschoen/wayland"
+import "slices"
+import "sync"
 
 // WmBase: create desktop-style surfaces
 //
@@ -42,9 +44,11 @@ import runtime "github.com/friedelschoen/wayland"
 // create windows that can be dragged, resized, maximized, etc, as well as
 // creating transient windows such as popup menus.
 type WmBase struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx        *runtime.Context
+	id         uint32
+	eventQueue []runtime.Event
+	eventCond  *sync.Cond
+	OnPing     runtime.EventHandlerFunc
 }
 
 // NewWmBase: create desktop-style surfaces
@@ -58,7 +62,9 @@ func NewWmBase(ctx *runtime.Context) *WmBase {
 	i := &WmBase{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *WmBase) Context() *runtime.Context {
@@ -66,6 +72,11 @@ func (i *WmBase) Context() *runtime.Context {
 }
 func (i *WmBase) ID() uint32 {
 	return i.id
+}
+func (i *WmBase) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Destroy: destroy xdg_wm_base
@@ -94,8 +105,7 @@ func (i *WmBase) Destroy() error {
 // Create a positioner object. A positioner object is used to position
 // surfaces relative to some parent surface. See the interface description
 // and xdg_surface.get_popup for details.
-func (i *WmBase) CreatePositioner() (*Positioner, error) {
-	id := NewPositioner(i.Context())
+func (i *WmBase) CreatePositioner(id *Positioner) error {
 	const opcode = 1
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -107,7 +117,7 @@ func (i *WmBase) CreatePositioner() (*Positioner, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // GetXdgSurface: create a shell surface from a surface
@@ -125,8 +135,7 @@ func (i *WmBase) CreatePositioner() (*Positioner, error) {
 //
 // See the documentation of xdg_surface for more details about what an
 // xdg_surface is and how it is used.
-func (i *WmBase) GetXdgSurface(surface *WlSurface) (*XdgSurface, error) {
-	id := NewXdgSurface(i.Context())
+func (i *WmBase) GetXdgSurface(id *XdgSurface, surface *WlSurface) error {
 	const opcode = 2
 	const _reqBufLen = 8 + 4 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -140,7 +149,7 @@ func (i *WmBase) GetXdgSurface(surface *WlSurface) (*XdgSurface, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], surface.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // Pong: respond to a ping event
@@ -251,12 +260,15 @@ type WmBasePingEvent struct {
 
 // WaitForPing: waits for WmBasePingEvent
 func (i *WmBase) WaitForPing() WmBasePingEvent {
-	c, ok := i.waitfor["Ping"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Ping"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(WmBasePingEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(WmBasePingEvent)
 }
 func (i *WmBase) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -267,12 +279,10 @@ func (i *WmBase) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Serial = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Ping"]; ok {
-			select {
-			case c <- e:
+		if i.OnPing != nil {
+			handled := i.OnPing(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Ping")
 			}
 		}
 		return e
@@ -898,9 +908,11 @@ func (i *Positioner) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 // has not been destroyed, i.e. the client must perform the initial commit
 // again before attaching a buffer.
 type XdgSurface struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx         *runtime.Context
+	id          uint32
+	eventQueue  []runtime.Event
+	eventCond   *sync.Cond
+	OnConfigure runtime.EventHandlerFunc
 }
 
 // NewXdgSurface: desktop user interface surface base interface
@@ -957,7 +969,9 @@ func NewXdgSurface(ctx *runtime.Context) *XdgSurface {
 	i := &XdgSurface{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *XdgSurface) Context() *runtime.Context {
@@ -965,6 +979,11 @@ func (i *XdgSurface) Context() *runtime.Context {
 }
 func (i *XdgSurface) ID() uint32 {
 	return i.id
+}
+func (i *XdgSurface) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Destroy: destroy the xdg_surface
@@ -993,8 +1012,7 @@ func (i *XdgSurface) Destroy() error {
 //
 // See the documentation of xdg_toplevel for more details about what an
 // xdg_toplevel is and how it is used.
-func (i *XdgSurface) GetToplevel() (*Toplevel, error) {
-	id := NewToplevel(i.Context())
+func (i *XdgSurface) GetToplevel(id *Toplevel) error {
 	const opcode = 1
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -1006,7 +1024,7 @@ func (i *XdgSurface) GetToplevel() (*Toplevel, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // GetPopup: assign the xdg_popup surface role
@@ -1019,8 +1037,7 @@ func (i *XdgSurface) GetToplevel() (*Toplevel, error) {
 //
 // See the documentation of xdg_popup for more details about what an
 // xdg_popup is and how it is used.
-func (i *XdgSurface) GetPopup(parent *XdgSurface, positioner *Positioner) (*Popup, error) {
-	id := NewPopup(i.Context())
+func (i *XdgSurface) GetPopup(id *Popup, parent *XdgSurface, positioner *Positioner) error {
 	const opcode = 2
 	const _reqBufLen = 8 + 4 + 4 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -1041,7 +1058,7 @@ func (i *XdgSurface) GetPopup(parent *XdgSurface, positioner *Positioner) (*Popu
 	runtime.PutUint32(_reqBuf[l:l+4], positioner.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // SetWindowGeometry: set the new window geometry
@@ -1241,12 +1258,15 @@ type XdgSurfaceConfigureEvent struct {
 
 // WaitForConfigure: waits for XdgSurfaceConfigureEvent
 func (i *XdgSurface) WaitForConfigure() XdgSurfaceConfigureEvent {
-	c, ok := i.waitfor["Configure"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Configure"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(XdgSurfaceConfigureEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(XdgSurfaceConfigureEvent)
 }
 func (i *XdgSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -1257,12 +1277,10 @@ func (i *XdgSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		e.Serial = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Configure"]; ok {
-			select {
-			case c <- e:
+		if i.OnConfigure != nil {
+			handled := i.OnConfigure(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Configure")
 			}
 		}
 		return e
@@ -1295,9 +1313,14 @@ func (i *XdgSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 //
 // Attaching a null buffer to a toplevel unmaps the surface.
 type Toplevel struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx               *runtime.Context
+	id                uint32
+	eventQueue        []runtime.Event
+	eventCond         *sync.Cond
+	OnConfigure       runtime.EventHandlerFunc
+	OnClose           runtime.EventHandlerFunc
+	OnConfigureBounds runtime.EventHandlerFunc
+	OnWmCapabilities  runtime.EventHandlerFunc
 }
 
 // NewToplevel: toplevel surface
@@ -1327,7 +1350,9 @@ func NewToplevel(ctx *runtime.Context) *Toplevel {
 	i := &Toplevel{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Toplevel) Context() *runtime.Context {
@@ -1335,6 +1360,11 @@ func (i *Toplevel) Context() *runtime.Context {
 }
 func (i *Toplevel) ID() uint32 {
 	return i.id
+}
+func (i *Toplevel) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Destroy: destroy the xdg_toplevel
@@ -2155,12 +2185,15 @@ type ToplevelConfigureEvent struct {
 
 // WaitForConfigure: waits for ToplevelConfigureEvent
 func (i *Toplevel) WaitForConfigure() ToplevelConfigureEvent {
-	c, ok := i.waitfor["Configure"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Configure"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(ToplevelConfigureEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(ToplevelConfigureEvent)
 }
 
 // ToplevelCloseEvent : surface wants to be closed
@@ -2179,12 +2212,15 @@ type ToplevelCloseEvent struct {
 
 // WaitForClose: waits for ToplevelCloseEvent
 func (i *Toplevel) WaitForClose() ToplevelCloseEvent {
-	c, ok := i.waitfor["Close"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Close"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(ToplevelCloseEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(ToplevelCloseEvent)
 }
 
 // ToplevelConfigureBoundsEvent : recommended window geometry bounds
@@ -2212,12 +2248,15 @@ type ToplevelConfigureBoundsEvent struct {
 
 // WaitForConfigureBounds: waits for ToplevelConfigureBoundsEvent
 func (i *Toplevel) WaitForConfigureBounds() ToplevelConfigureBoundsEvent {
-	c, ok := i.waitfor["ConfigureBounds"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["ConfigureBounds"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(ToplevelConfigureBoundsEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(ToplevelConfigureBoundsEvent)
 }
 
 // ToplevelWmCapabilitiesEvent : compositor capabilities
@@ -2249,12 +2288,15 @@ type ToplevelWmCapabilitiesEvent struct {
 
 // WaitForWmCapabilities: waits for ToplevelWmCapabilitiesEvent
 func (i *Toplevel) WaitForWmCapabilities() ToplevelWmCapabilitiesEvent {
-	c, ok := i.waitfor["WmCapabilities"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["WmCapabilities"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(ToplevelWmCapabilitiesEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(ToplevelWmCapabilitiesEvent)
 }
 func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -2272,12 +2314,10 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		copy(e.States, data[l:l+statesLen])
 		l += statesLen
 
-		if c, ok := i.waitfor["Configure"]; ok {
-			select {
-			case c <- e:
+		if i.OnConfigure != nil {
+			handled := i.OnConfigure(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Configure")
 			}
 		}
 		return e
@@ -2285,12 +2325,10 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		var e ToplevelCloseEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["Close"]; ok {
-			select {
-			case c <- e:
+		if i.OnClose != nil {
+			handled := i.OnClose(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Close")
 			}
 		}
 		return e
@@ -2303,12 +2341,10 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["ConfigureBounds"]; ok {
-			select {
-			case c <- e:
+		if i.OnConfigureBounds != nil {
+			handled := i.OnConfigureBounds(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "ConfigureBounds")
 			}
 		}
 		return e
@@ -2322,12 +2358,10 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		copy(e.Capabilities, data[l:l+capabilitiesLen])
 		l += capabilitiesLen
 
-		if c, ok := i.waitfor["WmCapabilities"]; ok {
-			select {
-			case c <- e:
+		if i.OnWmCapabilities != nil {
+			handled := i.OnWmCapabilities(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "WmCapabilities")
 			}
 		}
 		return e
@@ -2363,9 +2397,13 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // The client must call wl_surface.commit on the corresponding wl_surface
 // for the xdg_popup state to take effect.
 type Popup struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx            *runtime.Context
+	id             uint32
+	eventQueue     []runtime.Event
+	eventCond      *sync.Cond
+	OnConfigure    runtime.EventHandlerFunc
+	OnPopupDone    runtime.EventHandlerFunc
+	OnRepositioned runtime.EventHandlerFunc
 }
 
 // NewPopup: short-lived, popup surfaces for menus
@@ -2398,7 +2436,9 @@ func NewPopup(ctx *runtime.Context) *Popup {
 	i := &Popup{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Popup) Context() *runtime.Context {
@@ -2406,6 +2446,11 @@ func (i *Popup) Context() *runtime.Context {
 }
 func (i *Popup) ID() uint32 {
 	return i.id
+}
+func (i *Popup) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Destroy: remove xdg_popup interface
@@ -2584,12 +2629,15 @@ type PopupConfigureEvent struct {
 
 // WaitForConfigure: waits for PopupConfigureEvent
 func (i *Popup) WaitForConfigure() PopupConfigureEvent {
-	c, ok := i.waitfor["Configure"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Configure"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PopupConfigureEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PopupConfigureEvent)
 }
 
 // PopupPopupDoneEvent : popup interaction is done
@@ -2603,12 +2651,15 @@ type PopupPopupDoneEvent struct {
 
 // WaitForPopupDone: waits for PopupPopupDoneEvent
 func (i *Popup) WaitForPopupDone() PopupPopupDoneEvent {
-	c, ok := i.waitfor["PopupDone"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["PopupDone"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PopupPopupDoneEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PopupPopupDoneEvent)
 }
 
 // PopupRepositionedEvent : signal the completion of a repositioned request
@@ -2635,12 +2686,15 @@ type PopupRepositionedEvent struct {
 
 // WaitForRepositioned: waits for PopupRepositionedEvent
 func (i *Popup) WaitForRepositioned() PopupRepositionedEvent {
-	c, ok := i.waitfor["Repositioned"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Repositioned"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PopupRepositionedEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PopupRepositionedEvent)
 }
 func (i *Popup) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -2657,12 +2711,10 @@ func (i *Popup) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["Configure"]; ok {
-			select {
-			case c <- e:
+		if i.OnConfigure != nil {
+			handled := i.OnConfigure(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Configure")
 			}
 		}
 		return e
@@ -2670,12 +2722,10 @@ func (i *Popup) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		var e PopupPopupDoneEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["PopupDone"]; ok {
-			select {
-			case c <- e:
+		if i.OnPopupDone != nil {
+			handled := i.OnPopupDone(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "PopupDone")
 			}
 		}
 		return e
@@ -2686,12 +2736,10 @@ func (i *Popup) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Token = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Repositioned"]; ok {
-			select {
-			case c <- e:
+		if i.OnRepositioned != nil {
+			handled := i.OnRepositioned(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Repositioned")
 			}
 		}
 		return e

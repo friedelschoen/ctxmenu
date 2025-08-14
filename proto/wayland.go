@@ -31,21 +31,22 @@
 
 package proto
 
-import (
-	"fmt"
-	"syscall"
-
-	runtime "github.com/friedelschoen/wayland"
-)
+import runtime "github.com/friedelschoen/wayland"
+import "slices"
+import "sync"
+import "syscall"
 
 // Display: core global object
 //
 // The core global object.  This is a special singleton object.  It
 // is used for internal Wayland protocol features.
 type Display struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx        *runtime.Context
+	id         uint32
+	eventQueue []runtime.Event
+	eventCond  *sync.Cond
+	OnError    runtime.EventHandlerFunc
+	OnDeleteId runtime.EventHandlerFunc
 }
 
 // NewDisplay: core global object
@@ -56,7 +57,9 @@ func NewDisplay(ctx *runtime.Context) *Display {
 	i := &Display{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Display) Context() *runtime.Context {
@@ -64,6 +67,11 @@ func (i *Display) Context() *runtime.Context {
 }
 func (i *Display) ID() uint32 {
 	return i.id
+}
+func (i *Display) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Sync: asynchronous roundtrip
@@ -79,8 +87,7 @@ func (i *Display) ID() uint32 {
 // attempt to use it after that point.
 //
 // The callback_data passed in the callback is undefined and should be ignored.
-func (i *Display) Sync() (*Callback, error) {
-	callback := NewCallback(i.Context())
+func (i *Display) Sync(callback *Callback) error {
 	const opcode = 0
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -92,7 +99,7 @@ func (i *Display) Sync() (*Callback, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], callback.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return callback, err
+	return err
 }
 
 // GetRegistry: get global registry object
@@ -106,8 +113,7 @@ func (i *Display) Sync() (*Callback, error) {
 // client disconnects, not when the client side proxy is destroyed.
 // Therefore, clients should invoke get_registry as infrequently as
 // possible to avoid wasting memory.
-func (i *Display) GetRegistry() (*Registry, error) {
-	registry := NewRegistry(i.Context())
+func (i *Display) GetRegistry(registry *Registry) error {
 	const opcode = 1
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -119,7 +125,7 @@ func (i *Display) GetRegistry() (*Registry, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], registry.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return registry, err
+	return err
 }
 func (i *Display) Destroy() error {
 	i.Context().Unregister(i)
@@ -193,12 +199,15 @@ type DisplayErrorEvent struct {
 
 // WaitForError: waits for DisplayErrorEvent
 func (i *Display) WaitForError() DisplayErrorEvent {
-	c, ok := i.waitfor["Error"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Error"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DisplayErrorEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DisplayErrorEvent)
 }
 
 // DisplayDeleteIdEvent : acknowledge object ID deletion
@@ -215,12 +224,15 @@ type DisplayDeleteIdEvent struct {
 
 // WaitForDeleteId: waits for DisplayDeleteIdEvent
 func (i *Display) WaitForDeleteId() DisplayDeleteIdEvent {
-	c, ok := i.waitfor["DeleteId"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["DeleteId"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DisplayDeleteIdEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DisplayDeleteIdEvent)
 }
 func (i *Display) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -237,12 +249,10 @@ func (i *Display) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Message = runtime.String(data[l : l+messageLen])
 		l += messageLen
 
-		if c, ok := i.waitfor["Error"]; ok {
-			select {
-			case c <- e:
+		if i.OnError != nil {
+			handled := i.OnError(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Error")
 			}
 		}
 		return e
@@ -253,12 +263,10 @@ func (i *Display) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Id = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["DeleteId"]; ok {
-			select {
-			case c <- e:
+		if i.OnDeleteId != nil {
+			handled := i.OnDeleteId(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "DeleteId")
 			}
 		}
 		return e
@@ -290,9 +298,12 @@ func (i *Display) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // emit events to the client and lets the client invoke requests on
 // the object.
 type Registry struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx            *runtime.Context
+	id             uint32
+	eventQueue     []runtime.Event
+	eventCond      *sync.Cond
+	OnGlobal       runtime.EventHandlerFunc
+	OnGlobalRemove runtime.EventHandlerFunc
 }
 
 // NewRegistry: global registry object
@@ -321,7 +332,9 @@ func NewRegistry(ctx *runtime.Context) *Registry {
 	i := &Registry{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Registry) Context() *runtime.Context {
@@ -329,6 +342,11 @@ func (i *Registry) Context() *runtime.Context {
 }
 func (i *Registry) ID() uint32 {
 	return i.id
+}
+func (i *Registry) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Bind: bind an object to the display
@@ -379,12 +397,15 @@ type RegistryGlobalEvent struct {
 
 // WaitForGlobal: waits for RegistryGlobalEvent
 func (i *Registry) WaitForGlobal() RegistryGlobalEvent {
-	c, ok := i.waitfor["Global"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Global"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(RegistryGlobalEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(RegistryGlobalEvent)
 }
 
 // RegistryGlobalRemoveEvent : announce removal of global object
@@ -406,12 +427,15 @@ type RegistryGlobalRemoveEvent struct {
 
 // WaitForGlobalRemove: waits for RegistryGlobalRemoveEvent
 func (i *Registry) WaitForGlobalRemove() RegistryGlobalRemoveEvent {
-	c, ok := i.waitfor["GlobalRemove"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["GlobalRemove"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(RegistryGlobalRemoveEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(RegistryGlobalRemoveEvent)
 }
 func (i *Registry) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -428,12 +452,10 @@ func (i *Registry) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Version = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Global"]; ok {
-			select {
-			case c <- e:
+		if i.OnGlobal != nil {
+			handled := i.OnGlobal(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Global")
 			}
 		}
 		return e
@@ -444,12 +466,10 @@ func (i *Registry) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Name = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["GlobalRemove"]; ok {
-			select {
-			case c <- e:
+		if i.OnGlobalRemove != nil {
+			handled := i.OnGlobalRemove(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "GlobalRemove")
 			}
 		}
 		return e
@@ -466,9 +486,11 @@ func (i *Registry) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // Note, because wl_callback objects are created from multiple independent
 // factory interfaces, the wl_callback interface is frozen at version 1.
 type Callback struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx        *runtime.Context
+	id         uint32
+	eventQueue []runtime.Event
+	eventCond  *sync.Cond
+	OnDone     runtime.EventHandlerFunc
 }
 
 // NewCallback: callback object
@@ -482,7 +504,9 @@ func NewCallback(ctx *runtime.Context) *Callback {
 	i := &Callback{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Callback) Context() *runtime.Context {
@@ -490,6 +514,11 @@ func (i *Callback) Context() *runtime.Context {
 }
 func (i *Callback) ID() uint32 {
 	return i.id
+}
+func (i *Callback) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 func (i *Callback) Destroy() error {
 	i.Context().Unregister(i)
@@ -506,12 +535,15 @@ type CallbackDoneEvent struct {
 
 // WaitForDone: waits for CallbackDoneEvent
 func (i *Callback) WaitForDone() CallbackDoneEvent {
-	c, ok := i.waitfor["Done"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Done"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(CallbackDoneEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(CallbackDoneEvent)
 }
 func (i *Callback) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -522,12 +554,10 @@ func (i *Callback) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.CallbackData = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Done"]; ok {
-			select {
-			case c <- e:
+		if i.OnDone != nil {
+			handled := i.OnDone(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Done")
 			}
 		}
 		return e
@@ -567,8 +597,7 @@ func (i *Compositor) ID() uint32 {
 // CreateSurface: create new surface
 //
 // Ask the compositor to create a new surface.
-func (i *Compositor) CreateSurface() (*WlSurface, error) {
-	id := NewWlSurface(i.Context())
+func (i *Compositor) CreateSurface(id *WlSurface) error {
 	const opcode = 0
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -580,14 +609,13 @@ func (i *Compositor) CreateSurface() (*WlSurface, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // CreateRegion: create new region
 //
 // Ask the compositor to create a new region.
-func (i *Compositor) CreateRegion() (*Region, error) {
-	id := NewRegion(i.Context())
+func (i *Compositor) CreateRegion(id *Region) error {
 	const opcode = 1
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -599,7 +627,7 @@ func (i *Compositor) CreateRegion() (*Region, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 func (i *Compositor) Destroy() error {
 	i.Context().Unregister(i)
@@ -665,8 +693,7 @@ func (i *ShmPool) ID() uint32 {
 //	height: buffer height, in pixels
 //	stride: number of bytes from the beginning of one row to the beginning of the next row
 //	format: buffer pixel format
-func (i *ShmPool) CreateBuffer(offset int32, width int32, height int32, stride int32, format uint32) (*Buffer, error) {
-	id := NewBuffer(i.Context())
+func (i *ShmPool) CreateBuffer(id *Buffer, offset int32, width int32, height int32, stride int32, format uint32) error {
 	const opcode = 0
 	const _reqBufLen = 8 + 4 + 4 + 4 + 4 + 4 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -688,7 +715,7 @@ func (i *ShmPool) CreateBuffer(offset int32, width int32, height int32, stride i
 	runtime.PutUint32(_reqBuf[l:l+4], uint32(format))
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // Destroy: destroy the pool
@@ -757,9 +784,11 @@ func (i *ShmPool) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // are emitted to inform clients about the valid pixel formats
 // that can be used for buffers.
 type Shm struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx        *runtime.Context
+	id         uint32
+	eventQueue []runtime.Event
+	eventCond  *sync.Cond
+	OnFormat   runtime.EventHandlerFunc
 }
 
 // NewShm: shared memory support
@@ -777,7 +806,9 @@ func NewShm(ctx *runtime.Context) *Shm {
 	i := &Shm{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Shm) Context() *runtime.Context {
@@ -785,6 +816,11 @@ func (i *Shm) Context() *runtime.Context {
 }
 func (i *Shm) ID() uint32 {
 	return i.id
+}
+func (i *Shm) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // CreatePool: create a shm pool
@@ -797,8 +833,7 @@ func (i *Shm) ID() uint32 {
 //
 //	fd: file descriptor for the pool
 //	size: pool size, in bytes
-func (i *Shm) CreatePool(fd int, size int32) (*ShmPool, error) {
-	id := NewShmPool(i.Context())
+func (i *Shm) CreatePool(id *ShmPool, fd int, size int32) error {
 	const opcode = 0
 	const _reqBufLen = 8 + 4 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -813,7 +848,7 @@ func (i *Shm) CreatePool(fd int, size int32) (*ShmPool, error) {
 	l += 4
 	oob := syscall.UnixRights(int(fd))
 	err := i.Context().WriteMsg(_reqBuf[:], oob)
-	return id, err
+	return err
 }
 
 // Release: release the shm object
@@ -1023,14 +1058,14 @@ const (
 	ShmFormatRg1616 ShmFormat = 0x32334752
 	// ShmFormatGr1616: [31:0] G:R 16:16 little endian
 	ShmFormatGr1616 ShmFormat = 0x32335247
-	// ShmFormatXrgb16161616F: [63:0] x:R:G:B 16:16:16:16 little endian
-	ShmFormatXrgb16161616F ShmFormat = 0x48345258
-	// ShmFormatXbgr16161616F: [63:0] x:B:G:R 16:16:16:16 little endian
-	ShmFormatXbgr16161616F ShmFormat = 0x48344258
-	// ShmFormatArgb16161616F: [63:0] A:R:G:B 16:16:16:16 little endian
-	ShmFormatArgb16161616F ShmFormat = 0x48345241
-	// ShmFormatAbgr16161616F: [63:0] A:B:G:R 16:16:16:16 little endian
-	ShmFormatAbgr16161616F ShmFormat = 0x48344241
+	// ShmFormatXrgb16161616f: [63:0] x:R:G:B 16:16:16:16 little endian
+	ShmFormatXrgb16161616f ShmFormat = 0x48345258
+	// ShmFormatXbgr16161616f: [63:0] x:B:G:R 16:16:16:16 little endian
+	ShmFormatXbgr16161616f ShmFormat = 0x48344258
+	// ShmFormatArgb16161616f: [63:0] A:R:G:B 16:16:16:16 little endian
+	ShmFormatArgb16161616f ShmFormat = 0x48345241
+	// ShmFormatAbgr16161616f: [63:0] A:B:G:R 16:16:16:16 little endian
+	ShmFormatAbgr16161616f ShmFormat = 0x48344241
 	// ShmFormatXyuv8888: [31:0] X:Y:Cb:Cr 8:8:8:8 little endian
 	ShmFormatXyuv8888 ShmFormat = 0x56555958
 	// ShmFormatVuy888: [23:0] Cr:Cb:Y 8:8:8 little endian
@@ -1055,16 +1090,16 @@ const (
 	ShmFormatXvyu1216161616 ShmFormat = 0x36335658
 	// ShmFormatXvyu16161616: [63:0] X:Cr:Y:Cb 16:16:16:16 little endian
 	ShmFormatXvyu16161616 ShmFormat = 0x38345658
-	// ShmFormatY0L0: [63:0]   A3:A2:Y3:0:Cr0:0:Y2:0:A1:A0:Y1:0:Cb0:0:Y0:0  1:1:8:2:8:2:8:2:1:1:8:2:8:2:8:2 little endian
-	ShmFormatY0L0 ShmFormat = 0x304c3059
-	// ShmFormatX0L0: [63:0]   X3:X2:Y3:0:Cr0:0:Y2:0:X1:X0:Y1:0:Cb0:0:Y0:0  1:1:8:2:8:2:8:2:1:1:8:2:8:2:8:2 little endian
-	ShmFormatX0L0 ShmFormat = 0x304c3058
-	// ShmFormatY0L2: [63:0]   A3:A2:Y3:Cr0:Y2:A1:A0:Y1:Cb0:Y0  1:1:10:10:10:1:1:10:10:10 little endian
-	ShmFormatY0L2 ShmFormat = 0x324c3059
-	// ShmFormatX0L2: [63:0]   X3:X2:Y3:Cr0:Y2:X1:X0:Y1:Cb0:Y0  1:1:10:10:10:1:1:10:10:10 little endian
-	ShmFormatX0L2        ShmFormat = 0x324c3058
-	ShmFormatYuv4208Bit  ShmFormat = 0x38305559
-	ShmFormatYuv42010Bit ShmFormat = 0x30315559
+	// ShmFormatY0l0: [63:0]   A3:A2:Y3:0:Cr0:0:Y2:0:A1:A0:Y1:0:Cb0:0:Y0:0  1:1:8:2:8:2:8:2:1:1:8:2:8:2:8:2 little endian
+	ShmFormatY0l0 ShmFormat = 0x304c3059
+	// ShmFormatX0l0: [63:0]   X3:X2:Y3:0:Cr0:0:Y2:0:X1:X0:Y1:0:Cb0:0:Y0:0  1:1:8:2:8:2:8:2:1:1:8:2:8:2:8:2 little endian
+	ShmFormatX0l0 ShmFormat = 0x304c3058
+	// ShmFormatY0l2: [63:0]   A3:A2:Y3:Cr0:Y2:A1:A0:Y1:Cb0:Y0  1:1:10:10:10:1:1:10:10:10 little endian
+	ShmFormatY0l2 ShmFormat = 0x324c3059
+	// ShmFormatX0l2: [63:0]   X3:X2:Y3:Cr0:Y2:X1:X0:Y1:Cb0:Y0  1:1:10:10:10:1:1:10:10:10 little endian
+	ShmFormatX0l2        ShmFormat = 0x324c3058
+	ShmFormatYuv4208bit  ShmFormat = 0x38305559
+	ShmFormatYuv42010bit ShmFormat = 0x30315559
 	ShmFormatXrgb8888A8  ShmFormat = 0x38415258
 	ShmFormatXbgr8888A8  ShmFormat = 0x38414258
 	ShmFormatRgbx8888A8  ShmFormat = 0x38415852
@@ -1261,13 +1296,13 @@ func (e ShmFormat) Name() string {
 		return "rg1616"
 	case ShmFormatGr1616:
 		return "gr1616"
-	case ShmFormatXrgb16161616F:
+	case ShmFormatXrgb16161616f:
 		return "xrgb16161616f"
-	case ShmFormatXbgr16161616F:
+	case ShmFormatXbgr16161616f:
 		return "xbgr16161616f"
-	case ShmFormatArgb16161616F:
+	case ShmFormatArgb16161616f:
 		return "argb16161616f"
-	case ShmFormatAbgr16161616F:
+	case ShmFormatAbgr16161616f:
 		return "abgr16161616f"
 	case ShmFormatXyuv8888:
 		return "xyuv8888"
@@ -1293,17 +1328,17 @@ func (e ShmFormat) Name() string {
 		return "xvyu12_16161616"
 	case ShmFormatXvyu16161616:
 		return "xvyu16161616"
-	case ShmFormatY0L0:
+	case ShmFormatY0l0:
 		return "y0l0"
-	case ShmFormatX0L0:
+	case ShmFormatX0l0:
 		return "x0l0"
-	case ShmFormatY0L2:
+	case ShmFormatY0l2:
 		return "y0l2"
-	case ShmFormatX0L2:
+	case ShmFormatX0l2:
 		return "x0l2"
-	case ShmFormatYuv4208Bit:
+	case ShmFormatYuv4208bit:
 		return "yuv420_8bit"
-	case ShmFormatYuv42010Bit:
+	case ShmFormatYuv42010bit:
 		return "yuv420_10bit"
 	case ShmFormatXrgb8888A8:
 		return "xrgb8888_a8"
@@ -1513,13 +1548,13 @@ func (e ShmFormat) Value() string {
 		return "0x32334752"
 	case ShmFormatGr1616:
 		return "0x32335247"
-	case ShmFormatXrgb16161616F:
+	case ShmFormatXrgb16161616f:
 		return "0x48345258"
-	case ShmFormatXbgr16161616F:
+	case ShmFormatXbgr16161616f:
 		return "0x48344258"
-	case ShmFormatArgb16161616F:
+	case ShmFormatArgb16161616f:
 		return "0x48345241"
-	case ShmFormatAbgr16161616F:
+	case ShmFormatAbgr16161616f:
 		return "0x48344241"
 	case ShmFormatXyuv8888:
 		return "0x56555958"
@@ -1545,17 +1580,17 @@ func (e ShmFormat) Value() string {
 		return "0x36335658"
 	case ShmFormatXvyu16161616:
 		return "0x38345658"
-	case ShmFormatY0L0:
+	case ShmFormatY0l0:
 		return "0x304c3059"
-	case ShmFormatX0L0:
+	case ShmFormatX0l0:
 		return "0x304c3058"
-	case ShmFormatY0L2:
+	case ShmFormatY0l2:
 		return "0x324c3059"
-	case ShmFormatX0L2:
+	case ShmFormatX0l2:
 		return "0x324c3058"
-	case ShmFormatYuv4208Bit:
+	case ShmFormatYuv4208bit:
 		return "0x38305559"
-	case ShmFormatYuv42010Bit:
+	case ShmFormatYuv42010bit:
 		return "0x30315559"
 	case ShmFormatXrgb8888A8:
 		return "0x38415258"
@@ -1651,12 +1686,15 @@ type ShmFormatEvent struct {
 
 // WaitForFormat: waits for ShmFormatEvent
 func (i *Shm) WaitForFormat() ShmFormatEvent {
-	c, ok := i.waitfor["Format"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Format"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(ShmFormatEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(ShmFormatEvent)
 }
 func (i *Shm) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -1667,12 +1705,10 @@ func (i *Shm) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Format = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Format"]; ok {
-			select {
-			case c <- e:
+		if i.OnFormat != nil {
+			handled := i.OnFormat(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Format")
 			}
 		}
 		return e
@@ -1699,9 +1735,11 @@ func (i *Shm) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // Note, because wl_buffer objects are created from multiple independent
 // factory interfaces, the wl_buffer interface is frozen at version 1.
 type Buffer struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx        *runtime.Context
+	id         uint32
+	eventQueue []runtime.Event
+	eventCond  *sync.Cond
+	OnRelease  runtime.EventHandlerFunc
 }
 
 // NewBuffer: content for a wl_surface
@@ -1725,7 +1763,9 @@ func NewBuffer(ctx *runtime.Context) *Buffer {
 	i := &Buffer{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Buffer) Context() *runtime.Context {
@@ -1733,6 +1773,11 @@ func (i *Buffer) Context() *runtime.Context {
 }
 func (i *Buffer) ID() uint32 {
 	return i.id
+}
+func (i *Buffer) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Destroy: destroy a buffer
@@ -1777,26 +1822,26 @@ type BufferReleaseEvent struct {
 
 // WaitForRelease: waits for BufferReleaseEvent
 func (i *Buffer) WaitForRelease() BufferReleaseEvent {
-	c, ok := i.waitfor["Release"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Release"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(BufferReleaseEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(BufferReleaseEvent)
 }
 func (i *Buffer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
-	fmt.Println("release?", opcode, fd, data)
 	switch opcode {
 	case 0:
 		var e BufferReleaseEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["Release"]; ok {
-			select {
-			case c <- e:
+		if i.OnRelease != nil {
+			handled := i.OnRelease(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Release")
 			}
 		}
 		return e
@@ -1814,9 +1859,13 @@ func (i *Buffer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // converted to and provides the mechanism for transferring the
 // data directly from the source client.
 type DataOffer struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx             *runtime.Context
+	id              uint32
+	eventQueue      []runtime.Event
+	eventCond       *sync.Cond
+	OnOffer         runtime.EventHandlerFunc
+	OnSourceActions runtime.EventHandlerFunc
+	OnAction        runtime.EventHandlerFunc
 }
 
 // NewDataOffer: offer to transfer data
@@ -1831,7 +1880,9 @@ func NewDataOffer(ctx *runtime.Context) *DataOffer {
 	i := &DataOffer{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *DataOffer) Context() *runtime.Context {
@@ -1839,6 +1890,11 @@ func (i *DataOffer) Context() *runtime.Context {
 }
 func (i *DataOffer) ID() uint32 {
 	return i.id
+}
+func (i *DataOffer) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Accept: accept one of the offered mime types
@@ -2071,12 +2127,15 @@ type DataOfferOfferEvent struct {
 
 // WaitForOffer: waits for DataOfferOfferEvent
 func (i *DataOffer) WaitForOffer() DataOfferOfferEvent {
-	c, ok := i.waitfor["Offer"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Offer"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataOfferOfferEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataOfferOfferEvent)
 }
 
 // DataOfferSourceActionsEvent : notify the source-side available actions
@@ -2092,12 +2151,15 @@ type DataOfferSourceActionsEvent struct {
 
 // WaitForSourceActions: waits for DataOfferSourceActionsEvent
 func (i *DataOffer) WaitForSourceActions() DataOfferSourceActionsEvent {
-	c, ok := i.waitfor["SourceActions"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["SourceActions"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataOfferSourceActionsEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataOfferSourceActionsEvent)
 }
 
 // DataOfferActionEvent : notify the selected action
@@ -2144,12 +2206,15 @@ type DataOfferActionEvent struct {
 
 // WaitForAction: waits for DataOfferActionEvent
 func (i *DataOffer) WaitForAction() DataOfferActionEvent {
-	c, ok := i.waitfor["Action"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Action"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataOfferActionEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataOfferActionEvent)
 }
 func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -2162,12 +2227,10 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.MimeType = runtime.String(data[l : l+mimeTypeLen])
 		l += mimeTypeLen
 
-		if c, ok := i.waitfor["Offer"]; ok {
-			select {
-			case c <- e:
+		if i.OnOffer != nil {
+			handled := i.OnOffer(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Offer")
 			}
 		}
 		return e
@@ -2178,12 +2241,10 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.SourceActions = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["SourceActions"]; ok {
-			select {
-			case c <- e:
+		if i.OnSourceActions != nil {
+			handled := i.OnSourceActions(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "SourceActions")
 			}
 		}
 		return e
@@ -2194,12 +2255,10 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.DndAction = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Action"]; ok {
-			select {
-			case c <- e:
+		if i.OnAction != nil {
+			handled := i.OnAction(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Action")
 			}
 		}
 		return e
@@ -2215,9 +2274,16 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // provides a way to describe the offered data and a way to respond
 // to requests to transfer the data.
 type DataSource struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx                *runtime.Context
+	id                 uint32
+	eventQueue         []runtime.Event
+	eventCond          *sync.Cond
+	OnTarget           runtime.EventHandlerFunc
+	OnSend             runtime.EventHandlerFunc
+	OnCancelled        runtime.EventHandlerFunc
+	OnDndDropPerformed runtime.EventHandlerFunc
+	OnDndFinished      runtime.EventHandlerFunc
+	OnAction           runtime.EventHandlerFunc
 }
 
 // NewDataSource: offer to transfer data
@@ -2230,7 +2296,9 @@ func NewDataSource(ctx *runtime.Context) *DataSource {
 	i := &DataSource{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *DataSource) Context() *runtime.Context {
@@ -2238,6 +2306,11 @@ func (i *DataSource) Context() *runtime.Context {
 }
 func (i *DataSource) ID() uint32 {
 	return i.id
+}
+func (i *DataSource) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Offer: add an offered mime type
@@ -2359,12 +2432,15 @@ type DataSourceTargetEvent struct {
 
 // WaitForTarget: waits for DataSourceTargetEvent
 func (i *DataSource) WaitForTarget() DataSourceTargetEvent {
-	c, ok := i.waitfor["Target"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Target"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataSourceTargetEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataSourceTargetEvent)
 }
 
 // DataSourceSendEvent : send the data
@@ -2380,12 +2456,15 @@ type DataSourceSendEvent struct {
 
 // WaitForSend: waits for DataSourceSendEvent
 func (i *DataSource) WaitForSend() DataSourceSendEvent {
-	c, ok := i.waitfor["Send"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Send"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataSourceSendEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataSourceSendEvent)
 }
 
 // DataSourceCancelledEvent : selection was cancelled
@@ -2416,12 +2495,15 @@ type DataSourceCancelledEvent struct {
 
 // WaitForCancelled: waits for DataSourceCancelledEvent
 func (i *DataSource) WaitForCancelled() DataSourceCancelledEvent {
-	c, ok := i.waitfor["Cancelled"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Cancelled"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataSourceCancelledEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataSourceCancelledEvent)
 }
 
 // DataSourceDndDropPerformedEvent : the drag-and-drop operation physically finished
@@ -2441,12 +2523,15 @@ type DataSourceDndDropPerformedEvent struct {
 
 // WaitForDndDropPerformed: waits for DataSourceDndDropPerformedEvent
 func (i *DataSource) WaitForDndDropPerformed() DataSourceDndDropPerformedEvent {
-	c, ok := i.waitfor["DndDropPerformed"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["DndDropPerformed"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataSourceDndDropPerformedEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataSourceDndDropPerformedEvent)
 }
 
 // DataSourceDndFinishedEvent : the drag-and-drop operation concluded
@@ -2463,12 +2548,15 @@ type DataSourceDndFinishedEvent struct {
 
 // WaitForDndFinished: waits for DataSourceDndFinishedEvent
 func (i *DataSource) WaitForDndFinished() DataSourceDndFinishedEvent {
-	c, ok := i.waitfor["DndFinished"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["DndFinished"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataSourceDndFinishedEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataSourceDndFinishedEvent)
 }
 
 // DataSourceActionEvent : notify the selected action
@@ -2505,12 +2593,15 @@ type DataSourceActionEvent struct {
 
 // WaitForAction: waits for DataSourceActionEvent
 func (i *DataSource) WaitForAction() DataSourceActionEvent {
-	c, ok := i.waitfor["Action"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Action"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataSourceActionEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataSourceActionEvent)
 }
 func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -2523,12 +2614,10 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		e.MimeType = runtime.String(data[l : l+mimeTypeLen])
 		l += mimeTypeLen
 
-		if c, ok := i.waitfor["Target"]; ok {
-			select {
-			case c <- e:
+		if i.OnTarget != nil {
+			handled := i.OnTarget(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Target")
 			}
 		}
 		return e
@@ -2542,12 +2631,10 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		l += mimeTypeLen
 		e.Fd = fd
 
-		if c, ok := i.waitfor["Send"]; ok {
-			select {
-			case c <- e:
+		if i.OnSend != nil {
+			handled := i.OnSend(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Send")
 			}
 		}
 		return e
@@ -2555,12 +2642,10 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		var e DataSourceCancelledEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["Cancelled"]; ok {
-			select {
-			case c <- e:
+		if i.OnCancelled != nil {
+			handled := i.OnCancelled(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Cancelled")
 			}
 		}
 		return e
@@ -2568,12 +2653,10 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		var e DataSourceDndDropPerformedEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["DndDropPerformed"]; ok {
-			select {
-			case c <- e:
+		if i.OnDndDropPerformed != nil {
+			handled := i.OnDndDropPerformed(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "DndDropPerformed")
 			}
 		}
 		return e
@@ -2581,12 +2664,10 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		var e DataSourceDndFinishedEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["DndFinished"]; ok {
-			select {
-			case c <- e:
+		if i.OnDndFinished != nil {
+			handled := i.OnDndFinished(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "DndFinished")
 			}
 		}
 		return e
@@ -2597,12 +2678,10 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		e.DndAction = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Action"]; ok {
-			select {
-			case c <- e:
+		if i.OnAction != nil {
+			handled := i.OnAction(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Action")
 			}
 		}
 		return e
@@ -2619,9 +2698,16 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 // A wl_data_device provides access to inter-client data transfer
 // mechanisms such as copy-and-paste and drag-and-drop.
 type DataDevice struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx         *runtime.Context
+	id          uint32
+	eventQueue  []runtime.Event
+	eventCond   *sync.Cond
+	OnDataOffer runtime.EventHandlerFunc
+	OnEnter     runtime.EventHandlerFunc
+	OnLeave     runtime.EventHandlerFunc
+	OnMotion    runtime.EventHandlerFunc
+	OnDrop      runtime.EventHandlerFunc
+	OnSelection runtime.EventHandlerFunc
 }
 
 // NewDataDevice: data transfer device
@@ -2635,7 +2721,9 @@ func NewDataDevice(ctx *runtime.Context) *DataDevice {
 	i := &DataDevice{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *DataDevice) Context() *runtime.Context {
@@ -2643,6 +2731,11 @@ func (i *DataDevice) Context() *runtime.Context {
 }
 func (i *DataDevice) ID() uint32 {
 	return i.id
+}
+func (i *DataDevice) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // StartDrag: start drag-and-drop operation
@@ -2814,12 +2907,15 @@ type DataDeviceDataOfferEvent struct {
 
 // WaitForDataOffer: waits for DataDeviceDataOfferEvent
 func (i *DataDevice) WaitForDataOffer() DataDeviceDataOfferEvent {
-	c, ok := i.waitfor["DataOffer"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["DataOffer"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataDeviceDataOfferEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataDeviceDataOfferEvent)
 }
 
 // DataDeviceEnterEvent : initiate drag-and-drop session
@@ -2839,12 +2935,15 @@ type DataDeviceEnterEvent struct {
 
 // WaitForEnter: waits for DataDeviceEnterEvent
 func (i *DataDevice) WaitForEnter() DataDeviceEnterEvent {
-	c, ok := i.waitfor["Enter"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Enter"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataDeviceEnterEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataDeviceEnterEvent)
 }
 
 // DataDeviceLeaveEvent : end drag-and-drop session
@@ -2858,12 +2957,15 @@ type DataDeviceLeaveEvent struct {
 
 // WaitForLeave: waits for DataDeviceLeaveEvent
 func (i *DataDevice) WaitForLeave() DataDeviceLeaveEvent {
-	c, ok := i.waitfor["Leave"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Leave"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataDeviceLeaveEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataDeviceLeaveEvent)
 }
 
 // DataDeviceMotionEvent : drag-and-drop session motion
@@ -2881,12 +2983,15 @@ type DataDeviceMotionEvent struct {
 
 // WaitForMotion: waits for DataDeviceMotionEvent
 func (i *DataDevice) WaitForMotion() DataDeviceMotionEvent {
-	c, ok := i.waitfor["Motion"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Motion"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataDeviceMotionEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataDeviceMotionEvent)
 }
 
 // DataDeviceDropEvent : end drag-and-drop session successfully
@@ -2910,12 +3015,15 @@ type DataDeviceDropEvent struct {
 
 // WaitForDrop: waits for DataDeviceDropEvent
 func (i *DataDevice) WaitForDrop() DataDeviceDropEvent {
-	c, ok := i.waitfor["Drop"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Drop"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataDeviceDropEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataDeviceDropEvent)
 }
 
 // DataDeviceSelectionEvent : advertise new selection
@@ -2939,12 +3047,15 @@ type DataDeviceSelectionEvent struct {
 
 // WaitForSelection: waits for DataDeviceSelectionEvent
 func (i *DataDevice) WaitForSelection() DataDeviceSelectionEvent {
-	c, ok := i.waitfor["Selection"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Selection"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(DataDeviceSelectionEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(DataDeviceSelectionEvent)
 }
 func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -2955,12 +3066,10 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		e.Id = i.Context().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
 		l += 4
 
-		if c, ok := i.waitfor["DataOffer"]; ok {
-			select {
-			case c <- e:
+		if i.OnDataOffer != nil {
+			handled := i.OnDataOffer(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "DataOffer")
 			}
 		}
 		return e
@@ -2979,12 +3088,10 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		e.Id = i.Context().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
 		l += 4
 
-		if c, ok := i.waitfor["Enter"]; ok {
-			select {
-			case c <- e:
+		if i.OnEnter != nil {
+			handled := i.OnEnter(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Enter")
 			}
 		}
 		return e
@@ -2992,12 +3099,10 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		var e DataDeviceLeaveEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["Leave"]; ok {
-			select {
-			case c <- e:
+		if i.OnLeave != nil {
+			handled := i.OnLeave(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Leave")
 			}
 		}
 		return e
@@ -3012,12 +3117,10 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		e.Y = runtime.Fixed(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Motion"]; ok {
-			select {
-			case c <- e:
+		if i.OnMotion != nil {
+			handled := i.OnMotion(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Motion")
 			}
 		}
 		return e
@@ -3025,12 +3128,10 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		var e DataDeviceDropEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["Drop"]; ok {
-			select {
-			case c <- e:
+		if i.OnDrop != nil {
+			handled := i.OnDrop(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Drop")
 			}
 		}
 		return e
@@ -3041,12 +3142,10 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) runtime.Event 
 		e.Id = i.Context().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
 		l += 4
 
-		if c, ok := i.waitfor["Selection"]; ok {
-			select {
-			case c <- e:
+		if i.OnSelection != nil {
+			handled := i.OnSelection(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Selection")
 			}
 		}
 		return e
@@ -3100,8 +3199,7 @@ func (i *DataDeviceManager) ID() uint32 {
 // CreateDataSource: create a new data source
 //
 // Create a new data source.
-func (i *DataDeviceManager) CreateDataSource() (*DataSource, error) {
-	id := NewDataSource(i.Context())
+func (i *DataDeviceManager) CreateDataSource(id *DataSource) error {
 	const opcode = 0
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -3113,7 +3211,7 @@ func (i *DataDeviceManager) CreateDataSource() (*DataSource, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // GetDataDevice: create a new data device
@@ -3121,8 +3219,7 @@ func (i *DataDeviceManager) CreateDataSource() (*DataSource, error) {
 // Create a new data device for a given seat.
 //
 //	seat: seat associated with the data device
-func (i *DataDeviceManager) GetDataDevice(seat *Seat) (*DataDevice, error) {
-	id := NewDataDevice(i.Context())
+func (i *DataDeviceManager) GetDataDevice(id *DataDevice, seat *Seat) error {
 	const opcode = 1
 	const _reqBufLen = 8 + 4 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -3136,7 +3233,7 @@ func (i *DataDeviceManager) GetDataDevice(seat *Seat) (*DataDevice, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], seat.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 func (i *DataDeviceManager) Destroy() error {
 	i.Context().Unregister(i)
@@ -3266,8 +3363,7 @@ func (i *Shell) ID() uint32 {
 // Only one shell surface can be associated with a given surface.
 //
 //	surface: surface to be given the shell surface role
-func (i *Shell) GetShellSurface(surface *WlSurface) (*WlShellSurface, error) {
-	id := NewWlShellSurface(i.Context())
+func (i *Shell) GetShellSurface(id *WlShellSurface, surface *WlSurface) error {
 	const opcode = 0
 	const _reqBufLen = 8 + 4 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -3281,7 +3377,7 @@ func (i *Shell) GetShellSurface(surface *WlSurface) (*WlShellSurface, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], surface.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 func (i *Shell) Destroy() error {
 	i.Context().Unregister(i)
@@ -3334,9 +3430,13 @@ func (i *Shell) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // wl_shell_surface_destroy() must be called before destroying
 // the wl_surface object.
 type WlShellSurface struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx         *runtime.Context
+	id          uint32
+	eventQueue  []runtime.Event
+	eventCond   *sync.Cond
+	OnPing      runtime.EventHandlerFunc
+	OnConfigure runtime.EventHandlerFunc
+	OnPopupDone runtime.EventHandlerFunc
 }
 
 // NewWlShellSurface: desktop-style metadata interface
@@ -3356,7 +3456,9 @@ func NewWlShellSurface(ctx *runtime.Context) *WlShellSurface {
 	i := &WlShellSurface{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *WlShellSurface) Context() *runtime.Context {
@@ -3364,6 +3466,11 @@ func (i *WlShellSurface) Context() *runtime.Context {
 }
 func (i *WlShellSurface) ID() uint32 {
 	return i.id
+}
+func (i *WlShellSurface) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Pong: respond to a ping event
@@ -3885,12 +3992,15 @@ type WlShellSurfacePingEvent struct {
 
 // WaitForPing: waits for WlShellSurfacePingEvent
 func (i *WlShellSurface) WaitForPing() WlShellSurfacePingEvent {
-	c, ok := i.waitfor["Ping"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Ping"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(WlShellSurfacePingEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(WlShellSurfacePingEvent)
 }
 
 // WlShellSurfaceConfigureEvent : suggest resize
@@ -3921,12 +4031,15 @@ type WlShellSurfaceConfigureEvent struct {
 
 // WaitForConfigure: waits for WlShellSurfaceConfigureEvent
 func (i *WlShellSurface) WaitForConfigure() WlShellSurfaceConfigureEvent {
-	c, ok := i.waitfor["Configure"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Configure"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(WlShellSurfaceConfigureEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(WlShellSurfaceConfigureEvent)
 }
 
 // WlShellSurfacePopupDoneEvent : popup interaction is done
@@ -3940,12 +4053,15 @@ type WlShellSurfacePopupDoneEvent struct {
 
 // WaitForPopupDone: waits for WlShellSurfacePopupDoneEvent
 func (i *WlShellSurface) WaitForPopupDone() WlShellSurfacePopupDoneEvent {
-	c, ok := i.waitfor["PopupDone"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["PopupDone"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(WlShellSurfacePopupDoneEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(WlShellSurfacePopupDoneEvent)
 }
 func (i *WlShellSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -3956,12 +4072,10 @@ func (i *WlShellSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Ev
 		e.Serial = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Ping"]; ok {
-			select {
-			case c <- e:
+		if i.OnPing != nil {
+			handled := i.OnPing(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Ping")
 			}
 		}
 		return e
@@ -3976,12 +4090,10 @@ func (i *WlShellSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Ev
 		e.Height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["Configure"]; ok {
-			select {
-			case c <- e:
+		if i.OnConfigure != nil {
+			handled := i.OnConfigure(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Configure")
 			}
 		}
 		return e
@@ -3989,12 +4101,10 @@ func (i *WlShellSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Ev
 		var e WlShellSurfacePopupDoneEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["PopupDone"]; ok {
-			select {
-			case c <- e:
+		if i.OnPopupDone != nil {
+			handled := i.OnPopupDone(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "PopupDone")
 			}
 		}
 		return e
@@ -4048,9 +4158,14 @@ func (i *WlShellSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Ev
 // a cursor (cursor is a different role than sub-surface, and role
 // switching is not allowed).
 type WlSurface struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx                        *runtime.Context
+	id                         uint32
+	eventQueue                 []runtime.Event
+	eventCond                  *sync.Cond
+	OnEnter                    runtime.EventHandlerFunc
+	OnLeave                    runtime.EventHandlerFunc
+	OnPreferredBufferScale     runtime.EventHandlerFunc
+	OnPreferredBufferTransform runtime.EventHandlerFunc
 }
 
 // NewWlSurface: an onscreen surface
@@ -4101,7 +4216,9 @@ func NewWlSurface(ctx *runtime.Context) *WlSurface {
 	i := &WlSurface{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *WlSurface) Context() *runtime.Context {
@@ -4109,6 +4226,11 @@ func (i *WlSurface) Context() *runtime.Context {
 }
 func (i *WlSurface) ID() uint32 {
 	return i.id
+}
+func (i *WlSurface) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Destroy: delete surface
@@ -4306,8 +4428,7 @@ func (i *WlSurface) Damage(x int32, y int32, width int32, height int32) error {
 //
 // The callback_data passed in the callback is the current time, in
 // milliseconds, with an undefined base.
-func (i *WlSurface) Frame() (*Callback, error) {
-	callback := NewCallback(i.Context())
+func (i *WlSurface) Frame(callback *Callback) error {
 	const opcode = 3
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -4319,7 +4440,7 @@ func (i *WlSurface) Frame() (*Callback, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], callback.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return callback, err
+	return err
 }
 
 // SetOpaqueRegion: set opaque region
@@ -4707,12 +4828,15 @@ type WlSurfaceEnterEvent struct {
 
 // WaitForEnter: waits for WlSurfaceEnterEvent
 func (i *WlSurface) WaitForEnter() WlSurfaceEnterEvent {
-	c, ok := i.waitfor["Enter"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Enter"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(WlSurfaceEnterEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(WlSurfaceEnterEvent)
 }
 
 // WlSurfaceLeaveEvent : surface leaves an output
@@ -4733,12 +4857,15 @@ type WlSurfaceLeaveEvent struct {
 
 // WaitForLeave: waits for WlSurfaceLeaveEvent
 func (i *WlSurface) WaitForLeave() WlSurfaceLeaveEvent {
-	c, ok := i.waitfor["Leave"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Leave"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(WlSurfaceLeaveEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(WlSurfaceLeaveEvent)
 }
 
 // WlSurfacePreferredBufferScaleEvent : preferred buffer scale for the surface
@@ -4762,12 +4889,15 @@ type WlSurfacePreferredBufferScaleEvent struct {
 
 // WaitForPreferredBufferScale: waits for WlSurfacePreferredBufferScaleEvent
 func (i *WlSurface) WaitForPreferredBufferScale() WlSurfacePreferredBufferScaleEvent {
-	c, ok := i.waitfor["PreferredBufferScale"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["PreferredBufferScale"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(WlSurfacePreferredBufferScaleEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(WlSurfacePreferredBufferScaleEvent)
 }
 
 // WlSurfacePreferredBufferTransformEvent : preferred buffer transform for the surface
@@ -4788,12 +4918,15 @@ type WlSurfacePreferredBufferTransformEvent struct {
 
 // WaitForPreferredBufferTransform: waits for WlSurfacePreferredBufferTransformEvent
 func (i *WlSurface) WaitForPreferredBufferTransform() WlSurfacePreferredBufferTransformEvent {
-	c, ok := i.waitfor["PreferredBufferTransform"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["PreferredBufferTransform"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(WlSurfacePreferredBufferTransformEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(WlSurfacePreferredBufferTransformEvent)
 }
 func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -4804,12 +4937,10 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Output = i.Context().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
 		l += 4
 
-		if c, ok := i.waitfor["Enter"]; ok {
-			select {
-			case c <- e:
+		if i.OnEnter != nil {
+			handled := i.OnEnter(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Enter")
 			}
 		}
 		return e
@@ -4820,12 +4951,10 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Output = i.Context().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
 		l += 4
 
-		if c, ok := i.waitfor["Leave"]; ok {
-			select {
-			case c <- e:
+		if i.OnLeave != nil {
+			handled := i.OnLeave(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Leave")
 			}
 		}
 		return e
@@ -4836,12 +4965,10 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Factor = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["PreferredBufferScale"]; ok {
-			select {
-			case c <- e:
+		if i.OnPreferredBufferScale != nil {
+			handled := i.OnPreferredBufferScale(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "PreferredBufferScale")
 			}
 		}
 		return e
@@ -4852,12 +4979,10 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Transform = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["PreferredBufferTransform"]; ok {
-			select {
-			case c <- e:
+		if i.OnPreferredBufferTransform != nil {
+			handled := i.OnPreferredBufferTransform(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "PreferredBufferTransform")
 			}
 		}
 		return e
@@ -4873,9 +4998,12 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // device is hot plugged.  A seat typically has a pointer and
 // maintains a keyboard focus and a pointer focus.
 type Seat struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx            *runtime.Context
+	id             uint32
+	eventQueue     []runtime.Event
+	eventCond      *sync.Cond
+	OnCapabilities runtime.EventHandlerFunc
+	OnName         runtime.EventHandlerFunc
 }
 
 // NewSeat: group of input devices
@@ -4888,7 +5016,9 @@ func NewSeat(ctx *runtime.Context) *Seat {
 	i := &Seat{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Seat) Context() *runtime.Context {
@@ -4896,6 +5026,11 @@ func (i *Seat) Context() *runtime.Context {
 }
 func (i *Seat) ID() uint32 {
 	return i.id
+}
+func (i *Seat) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // GetPointer: return pointer object
@@ -4908,8 +5043,7 @@ func (i *Seat) ID() uint32 {
 // It is a protocol violation to issue this request on a seat that has
 // never had the pointer capability. The missing_capability error will
 // be sent in this case.
-func (i *Seat) GetPointer() (*Pointer, error) {
-	id := NewPointer(i.Context())
+func (i *Seat) GetPointer(id *Pointer) error {
 	const opcode = 0
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -4921,7 +5055,7 @@ func (i *Seat) GetPointer() (*Pointer, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // GetKeyboard: return keyboard object
@@ -4934,8 +5068,7 @@ func (i *Seat) GetPointer() (*Pointer, error) {
 // It is a protocol violation to issue this request on a seat that has
 // never had the keyboard capability. The missing_capability error will
 // be sent in this case.
-func (i *Seat) GetKeyboard() (*Keyboard, error) {
-	id := NewKeyboard(i.Context())
+func (i *Seat) GetKeyboard(id *Keyboard) error {
 	const opcode = 1
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -4947,7 +5080,7 @@ func (i *Seat) GetKeyboard() (*Keyboard, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // GetTouch: return touch object
@@ -4960,8 +5093,7 @@ func (i *Seat) GetKeyboard() (*Keyboard, error) {
 // It is a protocol violation to issue this request on a seat that has
 // never had the touch capability. The missing_capability error will
 // be sent in this case.
-func (i *Seat) GetTouch() (*Touch, error) {
-	id := NewTouch(i.Context())
+func (i *Seat) GetTouch(id *Touch) error {
 	const opcode = 2
 	const _reqBufLen = 8 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -4973,7 +5105,7 @@ func (i *Seat) GetTouch() (*Touch, error) {
 	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 // Release: release the seat object
@@ -5101,12 +5233,15 @@ type SeatCapabilitiesEvent struct {
 
 // WaitForCapabilities: waits for SeatCapabilitiesEvent
 func (i *Seat) WaitForCapabilities() SeatCapabilitiesEvent {
-	c, ok := i.waitfor["Capabilities"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Capabilities"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(SeatCapabilitiesEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(SeatCapabilitiesEvent)
 }
 
 // SeatNameEvent : unique identifier for this seat
@@ -5134,12 +5269,15 @@ type SeatNameEvent struct {
 
 // WaitForName: waits for SeatNameEvent
 func (i *Seat) WaitForName() SeatNameEvent {
-	c, ok := i.waitfor["Name"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Name"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(SeatNameEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(SeatNameEvent)
 }
 func (i *Seat) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -5150,12 +5288,10 @@ func (i *Seat) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Capabilities = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Capabilities"]; ok {
-			select {
-			case c <- e:
+		if i.OnCapabilities != nil {
+			handled := i.OnCapabilities(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Capabilities")
 			}
 		}
 		return e
@@ -5168,12 +5304,10 @@ func (i *Seat) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Name = runtime.String(data[l : l+nameLen])
 		l += nameLen
 
-		if c, ok := i.waitfor["Name"]; ok {
-			select {
-			case c <- e:
+		if i.OnName != nil {
+			handled := i.OnName(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Name")
 			}
 		}
 		return e
@@ -5193,9 +5327,21 @@ func (i *Seat) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // and button and axis events for button presses, button releases
 // and scrolling.
 type Pointer struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx                     *runtime.Context
+	id                      uint32
+	eventQueue              []runtime.Event
+	eventCond               *sync.Cond
+	OnEnter                 runtime.EventHandlerFunc
+	OnLeave                 runtime.EventHandlerFunc
+	OnMotion                runtime.EventHandlerFunc
+	OnButton                runtime.EventHandlerFunc
+	OnAxis                  runtime.EventHandlerFunc
+	OnFrame                 runtime.EventHandlerFunc
+	OnAxisSource            runtime.EventHandlerFunc
+	OnAxisStop              runtime.EventHandlerFunc
+	OnAxisDiscrete          runtime.EventHandlerFunc
+	OnAxisValue120          runtime.EventHandlerFunc
+	OnAxisRelativeDirection runtime.EventHandlerFunc
 }
 
 // NewPointer: pointer input device
@@ -5212,7 +5358,9 @@ func NewPointer(ctx *runtime.Context) *Pointer {
 	i := &Pointer{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Pointer) Context() *runtime.Context {
@@ -5220,6 +5368,11 @@ func (i *Pointer) Context() *runtime.Context {
 }
 func (i *Pointer) ID() uint32 {
 	return i.id
+}
+func (i *Pointer) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // SetCursor: set the pointer surface
@@ -5528,12 +5681,15 @@ type PointerEnterEvent struct {
 
 // WaitForEnter: waits for PointerEnterEvent
 func (i *Pointer) WaitForEnter() PointerEnterEvent {
-	c, ok := i.waitfor["Enter"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Enter"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerEnterEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerEnterEvent)
 }
 
 // PointerLeaveEvent : leave event
@@ -5551,12 +5707,15 @@ type PointerLeaveEvent struct {
 
 // WaitForLeave: waits for PointerLeaveEvent
 func (i *Pointer) WaitForLeave() PointerLeaveEvent {
-	c, ok := i.waitfor["Leave"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Leave"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerLeaveEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerLeaveEvent)
 }
 
 // PointerMotionEvent : pointer motion event
@@ -5573,12 +5732,15 @@ type PointerMotionEvent struct {
 
 // WaitForMotion: waits for PointerMotionEvent
 func (i *Pointer) WaitForMotion() PointerMotionEvent {
-	c, ok := i.waitfor["Motion"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Motion"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerMotionEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerMotionEvent)
 }
 
 // PointerButtonEvent : pointer button event
@@ -5607,12 +5769,15 @@ type PointerButtonEvent struct {
 
 // WaitForButton: waits for PointerButtonEvent
 func (i *Pointer) WaitForButton() PointerButtonEvent {
-	c, ok := i.waitfor["Button"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Button"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerButtonEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerButtonEvent)
 }
 
 // PointerAxisEvent : axis event
@@ -5642,12 +5807,15 @@ type PointerAxisEvent struct {
 
 // WaitForAxis: waits for PointerAxisEvent
 func (i *Pointer) WaitForAxis() PointerAxisEvent {
-	c, ok := i.waitfor["Axis"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Axis"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerAxisEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerAxisEvent)
 }
 
 // PointerFrameEvent : end of a pointer event sequence
@@ -5692,12 +5860,15 @@ type PointerFrameEvent struct {
 
 // WaitForFrame: waits for PointerFrameEvent
 func (i *Pointer) WaitForFrame() PointerFrameEvent {
-	c, ok := i.waitfor["Frame"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Frame"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerFrameEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerFrameEvent)
 }
 
 // PointerAxisSourceEvent : axis source event
@@ -5734,12 +5905,15 @@ type PointerAxisSourceEvent struct {
 
 // WaitForAxisSource: waits for PointerAxisSourceEvent
 func (i *Pointer) WaitForAxisSource() PointerAxisSourceEvent {
-	c, ok := i.waitfor["AxisSource"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["AxisSource"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerAxisSourceEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerAxisSourceEvent)
 }
 
 // PointerAxisStopEvent : axis stop event
@@ -5766,12 +5940,15 @@ type PointerAxisStopEvent struct {
 
 // WaitForAxisStop: waits for PointerAxisStopEvent
 func (i *Pointer) WaitForAxisStop() PointerAxisStopEvent {
-	c, ok := i.waitfor["AxisStop"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["AxisStop"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerAxisStopEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerAxisStopEvent)
 }
 
 // PointerAxisDiscreteEvent : axis click event
@@ -5814,12 +5991,15 @@ type PointerAxisDiscreteEvent struct {
 
 // WaitForAxisDiscrete: waits for PointerAxisDiscreteEvent
 func (i *Pointer) WaitForAxisDiscrete() PointerAxisDiscreteEvent {
-	c, ok := i.waitfor["AxisDiscrete"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["AxisDiscrete"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerAxisDiscreteEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerAxisDiscreteEvent)
 }
 
 // PointerAxisValue120Event : axis high-resolution scroll event
@@ -5853,12 +6033,15 @@ type PointerAxisValue120Event struct {
 
 // WaitForAxisValue120: waits for PointerAxisValue120Event
 func (i *Pointer) WaitForAxisValue120() PointerAxisValue120Event {
-	c, ok := i.waitfor["AxisValue120"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["AxisValue120"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerAxisValue120Event); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerAxisValue120Event)
 }
 
 // PointerAxisRelativeDirectionEvent : axis relative physical direction event
@@ -5906,12 +6089,15 @@ type PointerAxisRelativeDirectionEvent struct {
 
 // WaitForAxisRelativeDirection: waits for PointerAxisRelativeDirectionEvent
 func (i *Pointer) WaitForAxisRelativeDirection() PointerAxisRelativeDirectionEvent {
-	c, ok := i.waitfor["AxisRelativeDirection"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["AxisRelativeDirection"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(PointerAxisRelativeDirectionEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(PointerAxisRelativeDirectionEvent)
 }
 func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -5928,12 +6114,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.SurfaceY = runtime.Fixed(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Enter"]; ok {
-			select {
-			case c <- e:
+		if i.OnEnter != nil {
+			handled := i.OnEnter(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Enter")
 			}
 		}
 		return e
@@ -5946,12 +6130,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Surface = i.Context().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
 
-		if c, ok := i.waitfor["Leave"]; ok {
-			select {
-			case c <- e:
+		if i.OnLeave != nil {
+			handled := i.OnLeave(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Leave")
 			}
 		}
 		return e
@@ -5966,12 +6148,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.SurfaceY = runtime.Fixed(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Motion"]; ok {
-			select {
-			case c <- e:
+		if i.OnMotion != nil {
+			handled := i.OnMotion(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Motion")
 			}
 		}
 		return e
@@ -5988,12 +6168,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.State = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Button"]; ok {
-			select {
-			case c <- e:
+		if i.OnButton != nil {
+			handled := i.OnButton(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Button")
 			}
 		}
 		return e
@@ -6008,12 +6186,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Value = runtime.Fixed(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Axis"]; ok {
-			select {
-			case c <- e:
+		if i.OnAxis != nil {
+			handled := i.OnAxis(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Axis")
 			}
 		}
 		return e
@@ -6021,12 +6197,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		var e PointerFrameEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["Frame"]; ok {
-			select {
-			case c <- e:
+		if i.OnFrame != nil {
+			handled := i.OnFrame(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Frame")
 			}
 		}
 		return e
@@ -6037,12 +6211,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.AxisSource = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["AxisSource"]; ok {
-			select {
-			case c <- e:
+		if i.OnAxisSource != nil {
+			handled := i.OnAxisSource(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "AxisSource")
 			}
 		}
 		return e
@@ -6055,12 +6227,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Axis = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["AxisStop"]; ok {
-			select {
-			case c <- e:
+		if i.OnAxisStop != nil {
+			handled := i.OnAxisStop(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "AxisStop")
 			}
 		}
 		return e
@@ -6073,12 +6243,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Discrete = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["AxisDiscrete"]; ok {
-			select {
-			case c <- e:
+		if i.OnAxisDiscrete != nil {
+			handled := i.OnAxisDiscrete(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "AxisDiscrete")
 			}
 		}
 		return e
@@ -6091,12 +6259,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Value120 = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["AxisValue120"]; ok {
-			select {
-			case c <- e:
+		if i.OnAxisValue120 != nil {
+			handled := i.OnAxisValue120(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "AxisValue120")
 			}
 		}
 		return e
@@ -6109,12 +6275,10 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Direction = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["AxisRelativeDirection"]; ok {
-			select {
-			case c <- e:
+		if i.OnAxisRelativeDirection != nil {
+			handled := i.OnAxisRelativeDirection(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "AxisRelativeDirection")
 			}
 		}
 		return e
@@ -6138,9 +6302,16 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // By default, the active surface is null, the keys currently logically down
 // are empty, the active modifiers and the active group are 0.
 type Keyboard struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx          *runtime.Context
+	id           uint32
+	eventQueue   []runtime.Event
+	eventCond    *sync.Cond
+	OnKeymap     runtime.EventHandlerFunc
+	OnEnter      runtime.EventHandlerFunc
+	OnLeave      runtime.EventHandlerFunc
+	OnKey        runtime.EventHandlerFunc
+	OnModifiers  runtime.EventHandlerFunc
+	OnRepeatInfo runtime.EventHandlerFunc
 }
 
 // NewKeyboard: keyboard input device
@@ -6161,7 +6332,9 @@ func NewKeyboard(ctx *runtime.Context) *Keyboard {
 	i := &Keyboard{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Keyboard) Context() *runtime.Context {
@@ -6169,6 +6342,11 @@ func (i *Keyboard) Context() *runtime.Context {
 }
 func (i *Keyboard) ID() uint32 {
 	return i.id
+}
+func (i *Keyboard) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Release: release the keyboard object
@@ -6290,12 +6468,15 @@ type KeyboardKeymapEvent struct {
 
 // WaitForKeymap: waits for KeyboardKeymapEvent
 func (i *Keyboard) WaitForKeymap() KeyboardKeymapEvent {
-	c, ok := i.waitfor["Keymap"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Keymap"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(KeyboardKeymapEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(KeyboardKeymapEvent)
 }
 
 // KeyboardEnterEvent : enter event
@@ -6322,12 +6503,15 @@ type KeyboardEnterEvent struct {
 
 // WaitForEnter: waits for KeyboardEnterEvent
 func (i *Keyboard) WaitForEnter() KeyboardEnterEvent {
-	c, ok := i.waitfor["Enter"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Enter"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(KeyboardEnterEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(KeyboardEnterEvent)
 }
 
 // KeyboardLeaveEvent : leave event
@@ -6350,12 +6534,15 @@ type KeyboardLeaveEvent struct {
 
 // WaitForLeave: waits for KeyboardLeaveEvent
 func (i *Keyboard) WaitForLeave() KeyboardLeaveEvent {
-	c, ok := i.waitfor["Leave"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Leave"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(KeyboardLeaveEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(KeyboardLeaveEvent)
 }
 
 // KeyboardKeyEvent : key event
@@ -6393,12 +6580,15 @@ type KeyboardKeyEvent struct {
 
 // WaitForKey: waits for KeyboardKeyEvent
 func (i *Keyboard) WaitForKey() KeyboardKeyEvent {
-	c, ok := i.waitfor["Key"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Key"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(KeyboardKeyEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(KeyboardKeyEvent)
 }
 
 // KeyboardModifiersEvent : modifier and group state
@@ -6427,12 +6617,15 @@ type KeyboardModifiersEvent struct {
 
 // WaitForModifiers: waits for KeyboardModifiersEvent
 func (i *Keyboard) WaitForModifiers() KeyboardModifiersEvent {
-	c, ok := i.waitfor["Modifiers"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Modifiers"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(KeyboardModifiersEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(KeyboardModifiersEvent)
 }
 
 // KeyboardRepeatInfoEvent : repeat rate and delay
@@ -6457,12 +6650,15 @@ type KeyboardRepeatInfoEvent struct {
 
 // WaitForRepeatInfo: waits for KeyboardRepeatInfoEvent
 func (i *Keyboard) WaitForRepeatInfo() KeyboardRepeatInfoEvent {
-	c, ok := i.waitfor["RepeatInfo"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["RepeatInfo"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(KeyboardRepeatInfoEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(KeyboardRepeatInfoEvent)
 }
 func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -6476,12 +6672,10 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Size = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Keymap"]; ok {
-			select {
-			case c <- e:
+		if i.OnKeymap != nil {
+			handled := i.OnKeymap(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Keymap")
 			}
 		}
 		return e
@@ -6499,12 +6693,10 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		copy(e.Keys, data[l:l+keysLen])
 		l += keysLen
 
-		if c, ok := i.waitfor["Enter"]; ok {
-			select {
-			case c <- e:
+		if i.OnEnter != nil {
+			handled := i.OnEnter(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Enter")
 			}
 		}
 		return e
@@ -6517,12 +6709,10 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Surface = i.Context().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
 
-		if c, ok := i.waitfor["Leave"]; ok {
-			select {
-			case c <- e:
+		if i.OnLeave != nil {
+			handled := i.OnLeave(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Leave")
 			}
 		}
 		return e
@@ -6539,12 +6729,10 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.State = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Key"]; ok {
-			select {
-			case c <- e:
+		if i.OnKey != nil {
+			handled := i.OnKey(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Key")
 			}
 		}
 		return e
@@ -6563,12 +6751,10 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Group = runtime.Uint32(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Modifiers"]; ok {
-			select {
-			case c <- e:
+		if i.OnModifiers != nil {
+			handled := i.OnModifiers(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Modifiers")
 			}
 		}
 		return e
@@ -6581,12 +6767,10 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Delay = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["RepeatInfo"]; ok {
-			select {
-			case c <- e:
+		if i.OnRepeatInfo != nil {
+			handled := i.OnRepeatInfo(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "RepeatInfo")
 			}
 		}
 		return e
@@ -6606,9 +6790,17 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // and ending with an up event. Events relating to the same
 // contact point can be identified by the ID of the sequence.
 type Touch struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx           *runtime.Context
+	id            uint32
+	eventQueue    []runtime.Event
+	eventCond     *sync.Cond
+	OnDown        runtime.EventHandlerFunc
+	OnUp          runtime.EventHandlerFunc
+	OnMotion      runtime.EventHandlerFunc
+	OnFrame       runtime.EventHandlerFunc
+	OnCancel      runtime.EventHandlerFunc
+	OnShape       runtime.EventHandlerFunc
+	OnOrientation runtime.EventHandlerFunc
 }
 
 // NewTouch: touchscreen input device
@@ -6625,7 +6817,9 @@ func NewTouch(ctx *runtime.Context) *Touch {
 	i := &Touch{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Touch) Context() *runtime.Context {
@@ -6633,6 +6827,11 @@ func (i *Touch) Context() *runtime.Context {
 }
 func (i *Touch) ID() uint32 {
 	return i.id
+}
+func (i *Touch) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Release: release the touch object
@@ -6668,12 +6867,15 @@ type TouchDownEvent struct {
 
 // WaitForDown: waits for TouchDownEvent
 func (i *Touch) WaitForDown() TouchDownEvent {
-	c, ok := i.waitfor["Down"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Down"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(TouchDownEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(TouchDownEvent)
 }
 
 // TouchUpEvent : end of a touch event sequence
@@ -6690,12 +6892,15 @@ type TouchUpEvent struct {
 
 // WaitForUp: waits for TouchUpEvent
 func (i *Touch) WaitForUp() TouchUpEvent {
-	c, ok := i.waitfor["Up"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Up"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(TouchUpEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(TouchUpEvent)
 }
 
 // TouchMotionEvent : update of touch point coordinates
@@ -6711,12 +6916,15 @@ type TouchMotionEvent struct {
 
 // WaitForMotion: waits for TouchMotionEvent
 func (i *Touch) WaitForMotion() TouchMotionEvent {
-	c, ok := i.waitfor["Motion"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Motion"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(TouchMotionEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(TouchMotionEvent)
 }
 
 // TouchFrameEvent : end of touch frame event
@@ -6735,12 +6943,15 @@ type TouchFrameEvent struct {
 
 // WaitForFrame: waits for TouchFrameEvent
 func (i *Touch) WaitForFrame() TouchFrameEvent {
-	c, ok := i.waitfor["Frame"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Frame"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(TouchFrameEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(TouchFrameEvent)
 }
 
 // TouchCancelEvent : touch session cancelled
@@ -6759,12 +6970,15 @@ type TouchCancelEvent struct {
 
 // WaitForCancel: waits for TouchCancelEvent
 func (i *Touch) WaitForCancel() TouchCancelEvent {
-	c, ok := i.waitfor["Cancel"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Cancel"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(TouchCancelEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(TouchCancelEvent)
 }
 
 // TouchShapeEvent : update shape of touch point
@@ -6803,12 +7017,15 @@ type TouchShapeEvent struct {
 
 // WaitForShape: waits for TouchShapeEvent
 func (i *Touch) WaitForShape() TouchShapeEvent {
-	c, ok := i.waitfor["Shape"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Shape"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(TouchShapeEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(TouchShapeEvent)
 }
 
 // TouchOrientationEvent : update orientation of touch point
@@ -6844,12 +7061,15 @@ type TouchOrientationEvent struct {
 
 // WaitForOrientation: waits for TouchOrientationEvent
 func (i *Touch) WaitForOrientation() TouchOrientationEvent {
-	c, ok := i.waitfor["Orientation"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Orientation"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(TouchOrientationEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(TouchOrientationEvent)
 }
 func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -6870,12 +7090,10 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Y = runtime.Fixed(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Down"]; ok {
-			select {
-			case c <- e:
+		if i.OnDown != nil {
+			handled := i.OnDown(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Down")
 			}
 		}
 		return e
@@ -6890,12 +7108,10 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Id = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["Up"]; ok {
-			select {
-			case c <- e:
+		if i.OnUp != nil {
+			handled := i.OnUp(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Up")
 			}
 		}
 		return e
@@ -6912,12 +7128,10 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Y = runtime.Fixed(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Motion"]; ok {
-			select {
-			case c <- e:
+		if i.OnMotion != nil {
+			handled := i.OnMotion(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Motion")
 			}
 		}
 		return e
@@ -6925,12 +7139,10 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		var e TouchFrameEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["Frame"]; ok {
-			select {
-			case c <- e:
+		if i.OnFrame != nil {
+			handled := i.OnFrame(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Frame")
 			}
 		}
 		return e
@@ -6938,12 +7150,10 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		var e TouchCancelEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["Cancel"]; ok {
-			select {
-			case c <- e:
+		if i.OnCancel != nil {
+			handled := i.OnCancel(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Cancel")
 			}
 		}
 		return e
@@ -6958,12 +7168,10 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Minor = runtime.Fixed(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Shape"]; ok {
-			select {
-			case c <- e:
+		if i.OnShape != nil {
+			handled := i.OnShape(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Shape")
 			}
 		}
 		return e
@@ -6976,12 +7184,10 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Orientation = runtime.Fixed(data[l : l+4])
 		l += 4
 
-		if c, ok := i.waitfor["Orientation"]; ok {
-			select {
-			case c <- e:
+		if i.OnOrientation != nil {
+			handled := i.OnOrientation(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Orientation")
 			}
 		}
 		return e
@@ -6999,9 +7205,16 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 // displays part of the compositor space.  This object is published
 // as global during start up, or when a monitor is hotplugged.
 type Output struct {
-	ctx     *runtime.Context
-	id      uint32
-	waitfor map[string]chan runtime.Event
+	ctx           *runtime.Context
+	id            uint32
+	eventQueue    []runtime.Event
+	eventCond     *sync.Cond
+	OnGeometry    runtime.EventHandlerFunc
+	OnMode        runtime.EventHandlerFunc
+	OnDone        runtime.EventHandlerFunc
+	OnScale       runtime.EventHandlerFunc
+	OnName        runtime.EventHandlerFunc
+	OnDescription runtime.EventHandlerFunc
 }
 
 // NewOutput: compositor output region
@@ -7016,7 +7229,9 @@ func NewOutput(ctx *runtime.Context) *Output {
 	i := &Output{}
 	i.ctx = ctx
 	i.id = ctx.Register(i)
-	i.waitfor = make(map[string]chan runtime.Event)
+	var mu sync.Mutex
+	mu.Lock()
+	i.eventCond = sync.NewCond(&mu)
 	return i
 }
 func (i *Output) Context() *runtime.Context {
@@ -7024,6 +7239,11 @@ func (i *Output) Context() *runtime.Context {
 }
 func (i *Output) ID() uint32 {
 	return i.id
+}
+func (i *Output) BlockEvent(e runtime.Event) bool {
+	i.eventQueue = append(i.eventQueue, e)
+	i.eventCond.Signal()
+	return true
 }
 
 // Release: release the output object
@@ -7259,12 +7479,15 @@ type OutputGeometryEvent struct {
 
 // WaitForGeometry: waits for OutputGeometryEvent
 func (i *Output) WaitForGeometry() OutputGeometryEvent {
-	c, ok := i.waitfor["Geometry"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Geometry"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(OutputGeometryEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(OutputGeometryEvent)
 }
 
 // OutputModeEvent : advertise available modes for the output
@@ -7312,12 +7535,15 @@ type OutputModeEvent struct {
 
 // WaitForMode: waits for OutputModeEvent
 func (i *Output) WaitForMode() OutputModeEvent {
-	c, ok := i.waitfor["Mode"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Mode"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(OutputModeEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(OutputModeEvent)
 }
 
 // OutputDoneEvent : sent all information about output
@@ -7333,12 +7559,15 @@ type OutputDoneEvent struct {
 
 // WaitForDone: waits for OutputDoneEvent
 func (i *Output) WaitForDone() OutputDoneEvent {
-	c, ok := i.waitfor["Done"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Done"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(OutputDoneEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(OutputDoneEvent)
 }
 
 // OutputScaleEvent : output scaling properties
@@ -7368,12 +7597,15 @@ type OutputScaleEvent struct {
 
 // WaitForScale: waits for OutputScaleEvent
 func (i *Output) WaitForScale() OutputScaleEvent {
-	c, ok := i.waitfor["Scale"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Scale"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(OutputScaleEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(OutputScaleEvent)
 }
 
 // OutputNameEvent : name of this output
@@ -7413,12 +7645,15 @@ type OutputNameEvent struct {
 
 // WaitForName: waits for OutputNameEvent
 func (i *Output) WaitForName() OutputNameEvent {
-	c, ok := i.waitfor["Name"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Name"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(OutputNameEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(OutputNameEvent)
 }
 
 // OutputDescriptionEvent : human-readable description of this output
@@ -7444,12 +7679,15 @@ type OutputDescriptionEvent struct {
 
 // WaitForDescription: waits for OutputDescriptionEvent
 func (i *Output) WaitForDescription() OutputDescriptionEvent {
-	c, ok := i.waitfor["Description"]
-	if !ok {
-		c = make(chan runtime.Event)
-		i.waitfor["Description"] = c
+	for {
+		for idx, evt := range i.eventQueue {
+			if e, ok := evt.(OutputDescriptionEvent); ok {
+				i.eventQueue = slices.Delete(i.eventQueue, idx, idx)
+				return e
+			}
+		}
+		i.eventCond.Wait()
 	}
-	return (<-c).(OutputDescriptionEvent)
 }
 func (i *Output) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 	switch opcode {
@@ -7478,12 +7716,10 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Transform = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["Geometry"]; ok {
-			select {
-			case c <- e:
+		if i.OnGeometry != nil {
+			handled := i.OnGeometry(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Geometry")
 			}
 		}
 		return e
@@ -7500,12 +7736,10 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Refresh = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["Mode"]; ok {
-			select {
-			case c <- e:
+		if i.OnMode != nil {
+			handled := i.OnMode(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Mode")
 			}
 		}
 		return e
@@ -7513,12 +7747,10 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		var e OutputDoneEvent
 		e.proxy = i
 
-		if c, ok := i.waitfor["Done"]; ok {
-			select {
-			case c <- e:
+		if i.OnDone != nil {
+			handled := i.OnDone(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Done")
 			}
 		}
 		return e
@@ -7529,12 +7761,10 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Factor = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 
-		if c, ok := i.waitfor["Scale"]; ok {
-			select {
-			case c <- e:
+		if i.OnScale != nil {
+			handled := i.OnScale(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Scale")
 			}
 		}
 		return e
@@ -7547,12 +7777,10 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Name = runtime.String(data[l : l+nameLen])
 		l += nameLen
 
-		if c, ok := i.waitfor["Name"]; ok {
-			select {
-			case c <- e:
+		if i.OnName != nil {
+			handled := i.OnName(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Name")
 			}
 		}
 		return e
@@ -7565,12 +7793,10 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) runtime.Event {
 		e.Description = runtime.String(data[l : l+descriptionLen])
 		l += descriptionLen
 
-		if c, ok := i.waitfor["Description"]; ok {
-			select {
-			case c <- e:
+		if i.OnDescription != nil {
+			handled := i.OnDescription(e)
+			if handled {
 				return nil
-			default:
-				delete(i.waitfor, "Description")
 			}
 		}
 		return e
@@ -7791,8 +8017,7 @@ func (i *Subcompositor) Destroy() error {
 //
 //	surface: the surface to be turned into a sub-surface
 //	parent: the parent surface
-func (i *Subcompositor) GetSubsurface(surface *WlSurface, parent *WlSurface) (*WlSubsurface, error) {
-	id := NewWlSubsurface(i.Context())
+func (i *Subcompositor) GetSubsurface(id *WlSubsurface, surface *WlSurface, parent *WlSurface) error {
 	const opcode = 1
 	const _reqBufLen = 8 + 4 + 4 + 4
 	var _reqBuf [_reqBufLen]byte
@@ -7808,7 +8033,7 @@ func (i *Subcompositor) GetSubsurface(surface *WlSurface, parent *WlSurface) (*W
 	runtime.PutUint32(_reqBuf[l:l+4], parent.ID())
 	l += 4
 	err := i.Context().WriteMsg(_reqBuf[:], nil)
-	return id, err
+	return err
 }
 
 type SubcompositorError uint32

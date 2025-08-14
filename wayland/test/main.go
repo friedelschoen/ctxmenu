@@ -6,7 +6,6 @@ import (
 	"image/png"
 	"log"
 	"os"
-	"time"
 
 	"github.com/friedelschoen/ctxmenu/wayland"
 )
@@ -32,6 +31,5 @@ func main() {
 	}
 	defer win.Cleanup()
 
-	time.Sleep(10 * time.Second)
-	panic('x')
+	select {}
 }

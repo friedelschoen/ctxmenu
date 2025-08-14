@@ -88,7 +88,8 @@ func CreateWindow(appID, title string, frame *BGRA) (*Window, error) {
 	app.display = proto.NewDisplay(app.ctx)
 
 	// Get global interfaces registry
-	app.registry, err = app.display.GetRegistry()
+	app.registry = proto.NewRegistry(app.ctx)
+	err = app.display.GetRegistry(app.registry)
 	if err != nil {
 		log.Fatalf("unable to get global registry object: %v", err)
 	}
@@ -99,21 +100,23 @@ func CreateWindow(appID, title string, frame *BGRA) (*Window, error) {
 	app.displayRoundTrip()
 
 	// Create a wl_surface for toplevel window
-	app.surface, err = app.compositor.CreateSurface()
+	app.surface = proto.NewWlSurface(app.ctx)
+	err = app.compositor.CreateSurface(app.surface)
 	if err != nil {
 		log.Fatalf("unable to create compositor surface: %v", err)
 	}
 
 	// attach wl_surface to xdg_wmbase to get toplevel
 	// handle
-	xdgSurface, err := app.xdgWmBase.GetXdgSurface(app.surface)
+	app.xdgSurface = proto.NewXdgSurface(app.ctx)
+	err = app.xdgWmBase.GetXdgSurface(app.xdgSurface, app.surface)
 	if err != nil {
 		log.Fatalf("unable to get xdg_surface: %v", err)
 	}
-	app.xdgSurface = xdgSurface
 
 	// Get toplevel
-	app.xdgTopLevel, err = xdgSurface.GetToplevel()
+	app.xdgTopLevel = proto.NewToplevel(app.ctx)
+	err = app.xdgSurface.GetToplevel(app.xdgTopLevel)
 	if err != nil {
 		log.Fatalf("unable to get xdg_toplevel: %v", err)
 	}
@@ -233,21 +236,23 @@ func (app *Window) drawFrame() *proto.Buffer {
 	}
 	defer syscall.Munmap(data)
 
-	pool, err := app.shm.CreatePool(int(file.Fd()), int32(size))
+	pool := proto.NewShmPool(app.ctx)
+	err = app.shm.CreatePool(pool, int(file.Fd()), int32(size))
 	if err != nil {
 		log.Fatalf("unable to create shm pool: %v", err)
 	}
 	defer pool.Destroy()
 
-	buf, err := pool.CreateBuffer(0, int32(app.Frame.Rect.Dx()), int32(app.Frame.Rect.Dy()), int32(app.Frame.Stride), uint32(proto.ShmFormatArgb8888))
+	buf := proto.NewBuffer(app.ctx)
+	buf.OnRelease = func(_ client.Event) bool {
+		buf.Destroy()
+		return true
+	}
+
+	err = pool.CreateBuffer(buf, 0, int32(app.Frame.Rect.Dx()), int32(app.Frame.Rect.Dy()), int32(app.Frame.Stride), uint32(proto.ShmFormatArgb8888))
 	if err != nil {
 		log.Fatalf("unable to create proto.Buffer from shm pool: %v", err)
 	}
-
-	go func() {
-		buf.WaitForRelease()
-		buf.Destroy()
-	}()
 
 	copy(data, app.Frame.Pix)
 
@@ -294,7 +299,10 @@ func (app *Window) HandleToplevelClose(_ proto.ToplevelCloseEvent) {
 
 func (app *Window) displayRoundTrip() {
 	// Get display sync callback
-	callback, err := app.display.Sync()
+	callback := proto.NewCallback(app.ctx)
+	callback.OnDone = callback.BlockEvent
+
+	err := app.display.Sync(callback)
 	if err != nil {
 		log.Fatalf("unable to get sync callback: %v", err)
 	}
@@ -304,11 +312,11 @@ func (app *Window) displayRoundTrip() {
 }
 
 func (app *Window) attachKeyboard() {
-	keyboard, err := app.seat.GetKeyboard()
+	app.keyboard = proto.NewKeyboard(app.ctx)
+	err := app.seat.GetKeyboard(app.keyboard)
 	if err != nil {
 		log.Fatalf("unable to register keyboard interface: %v\n", err)
 	}
-	app.keyboard = keyboard
 }
 
 func (app *Window) releaseKeyboard() {
@@ -320,8 +328,8 @@ func (app *Window) releaseKeyboard() {
 }
 
 func (app *Window) attachPointer() {
-	var err error
-	app.pointer, err = app.seat.GetPointer()
+	app.pointer = proto.NewPointer(app.ctx)
+	err := app.seat.GetPointer(app.pointer)
 	if err != nil {
 		log.Fatalf("unable to register keyboard interface: %v\n", err)
 	}
