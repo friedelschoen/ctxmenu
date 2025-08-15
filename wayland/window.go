@@ -1,17 +1,17 @@
-package wayland
+package main
 
 import (
 	"errors"
-	"fmt"
+	"image"
+	"image/draw"
+	"image/png"
 	"log"
 	"os"
 	"syscall"
 
 	"github.com/friedelschoen/ctxmenu/proto"
-	client "github.com/friedelschoen/wayland"
+	"github.com/friedelschoen/wayland"
 )
-
-type Event any
 
 // Global app state
 type Window struct {
@@ -19,27 +19,25 @@ type Window struct {
 	title string
 	exit  bool
 
-	Frame *BGRA
+	Frame *image.RGBA
 
-	ctx         *client.Context
-	display     *proto.Display
-	registry    *proto.Registry
-	shm         *proto.Shm
-	compositor  *proto.Compositor
-	output      *proto.Output
-	xdgWmBase   *proto.WmBase
-	seat        *proto.Seat
-	seatVersion uint32
+	conn       *wayland.Conn
+	display    *proto.Display
+	shm        *proto.Shm
+	registry   *proto.Registry
+	compositor *proto.Compositor
+	seat       *proto.Seat
+	layerShell *proto.LayerShell
 
-	surface     *proto.WlSurface
-	xdgSurface  *proto.XdgSurface
-	xdgTopLevel *proto.Toplevel
+	surface *proto.WlSurface
+
+	layerSurface *proto.LayerSurface
 
 	keyboard *proto.Keyboard
 	pointer  *proto.Pointer
 }
 
-func CreateWindow(appID, title string, frame *BGRA) (*Window, error) {
+func CreateWindow(appID, title string, frame *image.RGBA) (*Window, error) {
 	app := &Window{
 		appID: appID,
 		title: title,
@@ -47,174 +45,80 @@ func CreateWindow(appID, title string, frame *BGRA) (*Window, error) {
 	}
 
 	var err error
-	app.ctx, err = client.Connect("")
+	app.conn, err = wayland.Connect("")
 	if err != nil {
 		log.Fatalf("unable to connect to wayland server: %v", err)
 	}
-	go func() {
-		// Start the dispatch loop
-		for !app.exit {
-			evt := <-app.ctx.EventC
-			switch e := evt.(type) {
-			case proto.DisplayErrorEvent:
-				app.HandleDisplayError(e)
-			case proto.ToplevelConfigureEvent:
-				app.HandleToplevelConfigure(e)
-			case proto.ToplevelCloseEvent:
-				app.HandleToplevelClose(e)
-			case proto.XdgSurfaceConfigureEvent:
-				app.HandleSurfaceConfigure(e)
-			case proto.RegistryGlobalEvent:
-				app.HandleRegistryGlobal(e)
-			case proto.ShmFormatEvent:
-				app.HandleShmFormat(e)
-			case proto.WmBasePingEvent:
-				app.HandleWmBasePing(e)
-			case proto.SeatCapabilitiesEvent:
-				app.HandleSeatCapabilities(e)
-			case proto.SeatNameEvent:
-				app.HandleSeatName(e)
-			case proto.KeyboardKeyEvent:
-				app.HandleKeyboardKey(e)
-			case proto.KeyboardKeymapEvent:
-				app.HandleKeyboardKeymap(e)
-			default:
-				fmt.Printf("dropping %T\n", e)
-			}
-		}
-	}()
 
 	// Connect to wayland server
-	app.display = proto.NewDisplay(app.ctx)
+	app.display = proto.NewDisplay(&proto.DisplayHandlers{
+		OnError: app.HandleDisplayError,
+	})
+	/* manually registing display */
+	app.conn.Register(app.display)
+
+	app.compositor = proto.NewCompositor(nil)
+	app.shm = proto.NewShm(nil)
+	app.seat = proto.NewSeat(&proto.SeatHandlers{
+		OnCapabilities: app.HandleSeatCapabilities,
+	})
+	app.layerShell = proto.NewLayerShell(nil)
+	reg := wayland.Registrar{app.compositor, app.shm, app.seat, app.layerShell}
 
 	// Get global interfaces registry
-	app.registry = proto.NewRegistry(app.ctx)
-	err = app.display.GetRegistry(app.registry)
-	if err != nil {
-		log.Fatalf("unable to get global registry object: %v", err)
-	}
+	app.registry = app.display.GetRegistry(&proto.RegistryHandlers{
+		OnGlobal: reg.Handler,
+	})
 
 	// Wait for interfaces to register
 	app.displayRoundTrip()
-	// Wait for handler events
-	app.displayRoundTrip()
+
+	// NOTE: eee
 
 	// Create a wl_surface for toplevel window
-	app.surface = proto.NewWlSurface(app.ctx)
-	err = app.compositor.CreateSurface(app.surface)
+	app.surface = app.compositor.CreateSurface(nil)
+
+	// zwlr_layer_shell_v1.get_layer_surface(surface, output, layer, namespace)
+	app.layerSurface = app.layerShell.GetLayerSurface(app.surface, nil, proto.LayerShellLayerOverlay, app.appID, &proto.LayerSurfaceHandlers{
+		// Listen for configure/closed
+		OnConfigure: func(ev wayland.Event) {
+			e := ev.(*proto.LayerSurfaceConfigureEvent)
+			// Ack first (required)
+			app.layerSurface.AckConfigure(e.Serial)
+
+			// If compositor provides width/height > 0, you can resize your buffer here.
+			// For now we just attach whatever frame we have.
+			app.surface.Attach(app.drawFrame(), 0, 0)
+			app.surface.Commit()
+		},
+		OnClosed: func(_ wayland.Event) {
+			app.exit = true
+		},
+	})
 	if err != nil {
-		log.Fatalf("unable to create compositor surface: %v", err)
+		log.Fatalf("unable to get layer_surface: %v", err)
 	}
 
-	// attach wl_surface to xdg_wmbase to get toplevel
-	// handle
-	app.xdgSurface = proto.NewXdgSurface(app.ctx)
-	err = app.xdgWmBase.GetXdgSurface(app.xdgSurface, app.surface)
-	if err != nil {
-		log.Fatalf("unable to get xdg_surface: %v", err)
-	}
+	// Typical “popup” anchoring: top-left (change as you like)
+	app.layerSurface.SetAnchor(
+		proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorLeft,
+	)
 
-	// Get toplevel
-	app.xdgTopLevel = proto.NewToplevel(app.ctx)
-	err = app.xdgSurface.GetToplevel(app.xdgTopLevel)
-	if err != nil {
-		log.Fatalf("unable to get xdg_toplevel: %v", err)
-	}
+	// Desired size — compositor may override via configure.
+	// If you want the surface to size to your buffer, set 0,0 here; otherwise set a hint.
+	app.layerSurface.SetSize(uint32(app.Frame.Rect.Dx()), uint32(app.Frame.Rect.Dy()))
 
-	// Set title
-	if err := app.xdgTopLevel.SetTitle(app.title); err != nil {
-		log.Fatalf("unable to set toplevel title: %v", err)
-	}
-	// Set appID
-	if err := app.xdgTopLevel.SetAppId(app.appID); err != nil {
-		log.Fatalf("unable to set toplevel appID: %v", err)
-	}
+	// Optional: Make it ignore struts (don’t reserve space like a panel)
+	// -1 means “auto” exclusive zone; 0 means none. For a popup-like surface, 0 is typical.
+	app.layerSurface.SetExclusiveZone(0)
+
+	// Optional margins/offset if you want
+	// _ = app.layerSurface.SetMargin(top, right, bottom, left)
 
 	// Commit the state changes (title & appID) to the server
-	if err := app.surface.Commit(); err != nil {
-		log.Fatalf("unable to commit surface state: %v", err)
-	}
+	app.surface.Commit()
 
 	return app, nil
-}
-
-func (app *Window) HandleRegistryGlobal(e proto.RegistryGlobalEvent) {
-	fmt.Printf("i: %s\n", e.Interface)
-	switch e.Interface {
-	case "wl_compositor":
-		compositor := proto.NewCompositor(app.display.Context())
-		err := app.registry.Bind(e.Name, e.Interface, e.Version, compositor)
-		if err != nil {
-			log.Fatalf("unable to bind wl_compositor interface: %v", err)
-		}
-		app.compositor = compositor
-	case "wl_shm":
-		shm := proto.NewShm(app.display.Context())
-		err := app.registry.Bind(e.Name, e.Interface, e.Version, shm)
-		if err != nil {
-			log.Fatalf("unable to bind wl_shm interface: %v", err)
-		}
-		app.shm = shm
-	case "xdg_wm_base":
-		xdgWmBase := proto.NewWmBase(app.display.Context())
-		err := app.registry.Bind(e.Name, e.Interface, e.Version, xdgWmBase)
-		if err != nil {
-			log.Fatalf("unable to bind xdg_wm_base interface: %v", err)
-		}
-		app.xdgWmBase = xdgWmBase
-		// Add xdg_wmbase ping handler
-	case "wl_seat":
-		seat := proto.NewSeat(app.display.Context())
-		err := app.registry.Bind(e.Name, e.Interface, e.Version, seat)
-		if err != nil {
-			log.Fatalf("unable to bind wl_seat interface: %v", err)
-		}
-		app.seat = seat
-		app.seatVersion = e.Version
-		// Add Keyboard & Pointer handlers
-	}
-}
-
-func (app *Window) HandleShmFormat(e proto.ShmFormatEvent) {
-
-}
-
-func (app *Window) HandleSurfaceConfigure(e proto.XdgSurfaceConfigureEvent) {
-	// Send ack to xdg_surface that we have a frame.
-	if err := app.xdgSurface.AckConfigure(e.Serial); err != nil {
-		log.Fatal("unable to ack xdg surface configure")
-	}
-
-	// Attach new frame to the surface
-	if err := app.surface.Attach(app.drawFrame(), 0, 0); err != nil {
-		log.Fatalf("unable to attach buffer to surface: %v", err)
-	}
-	// Commit the surface state
-	if err := app.surface.Commit(); err != nil {
-		log.Fatalf("unable to commit surface state: %v", err)
-	}
-}
-
-func (app *Window) HandleToplevelConfigure(e proto.ToplevelConfigureEvent) {
-	// width := e.Width
-	// height := e.Height
-
-	// if width == 0 || height == 0 {
-	// 	return
-	// }
-
-	// if width == app.width && height == app.height {
-	// 	return
-	// }
-
-	// // Resize the proxy image to new frame size
-	// // and set it to frame image
-
-	// app.frame = resize.Resize(uint(width), uint(height), app.pImage, resize.Bilinear).(*image.RGBA)
-
-	// // Update app size
-	// app.width = width
-	// app.height = height
 }
 
 func (app *Window) drawFrame() *proto.Buffer {
@@ -236,30 +140,23 @@ func (app *Window) drawFrame() *proto.Buffer {
 	}
 	defer syscall.Munmap(data)
 
-	pool := proto.NewShmPool(app.ctx)
-	err = app.shm.CreatePool(pool, int(file.Fd()), int32(size))
-	if err != nil {
-		log.Fatalf("unable to create shm pool: %v", err)
-	}
+	pool := app.shm.CreatePool(int(file.Fd()), int32(size), nil)
 	defer pool.Destroy()
 
-	buf := proto.NewBuffer(app.ctx)
-	buf.OnRelease = func(_ client.Event) bool {
-		buf.Destroy()
-		return true
-	}
-
-	err = pool.CreateBuffer(buf, 0, int32(app.Frame.Rect.Dx()), int32(app.Frame.Rect.Dy()), int32(app.Frame.Stride), uint32(proto.ShmFormatArgb8888))
-	if err != nil {
-		log.Fatalf("unable to create proto.Buffer from shm pool: %v", err)
-	}
+	buf := pool.CreateBuffer(0, int32(app.Frame.Rect.Dx()), int32(app.Frame.Rect.Dy()), int32(app.Frame.Stride), proto.ShmFormatAbgr8888, &proto.BufferHandlers{
+		OnRelease: func(e wayland.Event) {
+			e.Proxy().(*proto.Buffer).Destroy()
+		},
+	})
 
 	copy(data, app.Frame.Pix)
 
 	return buf
 }
 
-func (app *Window) HandleSeatCapabilities(e proto.SeatCapabilitiesEvent) {
+func (app *Window) HandleSeatCapabilities(evt wayland.Event) {
+	e := evt.(*proto.SeatCapabilitiesEvent)
+
 	havePointer := (e.Capabilities & uint32(proto.SeatCapabilityPointer)) != 0
 
 	if havePointer && app.pointer == nil {
@@ -277,83 +174,79 @@ func (app *Window) HandleSeatCapabilities(e proto.SeatCapabilitiesEvent) {
 	}
 }
 
-func (*Window) HandleSeatName(e proto.SeatNameEvent) {
+func (*Window) HandleSeatName(_ wayland.Proxy, e proto.SeatNameEvent) {
 
 }
 
 // HandleDisplayError handles proto.Display errors
-func (*Window) HandleDisplayError(e proto.DisplayErrorEvent) {
+func (*Window) HandleDisplayError(evt wayland.Event) {
+	e := evt.(*proto.DisplayErrorEvent)
 	// Just log.Fatal for now
-	log.Fatalf("display error event: %v", e)
+	log.Fatalf("display error event on %s: [%d] %s\n", e.ObjectId.Name(), e.Code, e.Message)
 }
 
-// HandleWmBasePing handles xdg ping by doing a Pong request
-func (app *Window) HandleWmBasePing(e proto.WmBasePingEvent) {
-	app.xdgWmBase.Pong(e.Serial)
-
-}
-
-func (app *Window) HandleToplevelClose(_ proto.ToplevelCloseEvent) {
+func (app *Window) HandleToplevelClose(_ wayland.Proxy, _ proto.ToplevelCloseEvent) {
 	app.exit = true
 }
 
 func (app *Window) displayRoundTrip() {
+	done := make(chan struct{})
 	// Get display sync callback
-	callback := proto.NewCallback(app.ctx)
-	callback.OnDone = callback.BlockEvent
-
-	err := app.display.Sync(callback)
-	if err != nil {
-		log.Fatalf("unable to get sync callback: %v", err)
-	}
+	callback := app.display.Sync(&proto.CallbackHandlers{
+		OnDone: func(_ wayland.Event) {
+			done <- struct{}{}
+		},
+	})
 	defer callback.Destroy()
 
-	callback.WaitForDone()
+	<-done
 }
 
 func (app *Window) attachKeyboard() {
-	app.keyboard = proto.NewKeyboard(app.ctx)
-	err := app.seat.GetKeyboard(app.keyboard)
-	if err != nil {
-		log.Fatalf("unable to register keyboard interface: %v\n", err)
-	}
+	app.keyboard = app.seat.GetKeyboard(nil)
 }
 
 func (app *Window) releaseKeyboard() {
-	if err := app.keyboard.Release(); err != nil {
-
-	}
+	app.keyboard.Release()
 	app.keyboard = nil
 
 }
 
 func (app *Window) attachPointer() {
-	app.pointer = proto.NewPointer(app.ctx)
-	err := app.seat.GetPointer(app.pointer)
-	if err != nil {
-		log.Fatalf("unable to register keyboard interface: %v\n", err)
-	}
+	app.pointer = app.seat.GetPointer(&proto.PointerHandlers{
+		OnEnter:                 func(e wayland.Event) { log.Println("Enter: ", e) },
+		OnLeave:                 func(e wayland.Event) { log.Println("Leave: ", e) },
+		OnMotion:                func(e wayland.Event) { log.Println("Motion: ", e) },
+		OnButton:                func(e wayland.Event) { log.Println("Button: ", e) },
+		OnAxis:                  func(e wayland.Event) { log.Println("Axis: ", e) },
+		OnFrame:                 func(e wayland.Event) { log.Println("Frame: ", e) },
+		OnAxisSource:            func(e wayland.Event) { log.Println("AxisSource: ", e) },
+		OnAxisStop:              func(e wayland.Event) { log.Println("AxisStop: ", e) },
+		OnAxisDiscrete:          func(e wayland.Event) { log.Println("AxisDiscrete: ", e) },
+		OnAxisValue120:          func(e wayland.Event) { log.Println("AxisValue120: ", e) },
+		OnAxisRelativeDirection: func(e wayland.Event) { log.Println("AxisRelativeDirection: ", e) },
+	})
+
+	log.Printf("pointer\n")
 
 	// app.pointer.SetKeyHandler(app.HandleKeyboardKey)
 	// keyboard.SetKeymapHandler(app.HandleKeyboardKeymap)
 }
 
 func (app *Window) releasePointer() {
-	if err := app.keyboard.Release(); err != nil {
-
-	}
-	app.keyboard = nil
+	app.pointer.Release()
+	app.pointer = nil
 
 }
 
-func (app *Window) HandleKeyboardKey(e proto.KeyboardKeyEvent) {
+func (app *Window) HandleKeyboardKey(_ wayland.Proxy, e proto.KeyboardKeyEvent) {
 	// close on "esc"
 	if e.Key == 1 {
 		app.exit = true
 	}
 }
 
-func (app *Window) HandleKeyboardKeymap(e proto.KeyboardKeymapEvent) {
+func (app *Window) HandleKeyboardKeymap(_ wayland.Proxy, e proto.KeyboardKeymapEvent) {
 	defer syscall.Close(e.Fd)
 
 	// flags := syscall.MAP_SHARED
@@ -388,47 +281,28 @@ func (app *Window) Cleanup() {
 		app.releaseKeyboard()
 	}
 
-	if app.xdgTopLevel != nil {
-		if err := app.xdgTopLevel.Destroy(); err != nil {
-
-		}
-		app.xdgTopLevel = nil
+	if app.layerSurface != nil {
+		app.layerSurface.Destroy()
+		app.layerSurface = nil
 	}
-
-	if app.xdgSurface != nil {
-		if err := app.xdgSurface.Destroy(); err != nil {
-
-		}
-		app.xdgSurface = nil
+	if app.layerShell != nil {
+		app.layerShell.Destroy()
+		app.layerShell = nil
 	}
 
 	if app.surface != nil {
-		if err := app.surface.Destroy(); err != nil {
-
-		}
+		app.surface.Destroy()
 		app.surface = nil
 	}
 
 	// Release wl_seat handlers
 	if app.seat != nil {
-		if err := app.seat.Release(); err != nil {
-
-		}
+		app.seat.Release()
 		app.seat = nil
 	}
 
-	// Release xdg_wmbase
-	if app.xdgWmBase != nil {
-		if err := app.xdgWmBase.Destroy(); err != nil {
-
-		}
-		app.xdgWmBase = nil
-	}
-
 	if app.compositor != nil {
-		if err := app.compositor.Destroy(); err != nil {
-
-		}
+		app.compositor.Destroy()
 		app.compositor = nil
 	}
 
@@ -446,7 +320,7 @@ func (app *Window) Cleanup() {
 	}
 
 	// Close the wayland server connection
-	if err := app.display.Context().Close(); err != nil {
+	if err := app.conn.Close(); err != nil {
 
 	}
 }
@@ -469,4 +343,27 @@ func createTmpfile(size int64) (*os.File, error) {
 		return nil, err
 	}
 	return file, nil
+}
+
+func main() {
+	pngfile, err := os.Open("screenshot/ctxmenu.png")
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	pngimg, err := png.Decode(pngfile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	destimg := image.NewRGBA(pngimg.Bounds())
+	draw.Draw(destimg, destimg.Rect, pngimg, image.Point{}, draw.Over)
+
+	win, err := CreateWindow("testwin", "testwin", destimg)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer win.Cleanup()
+
+	select {}
 }
