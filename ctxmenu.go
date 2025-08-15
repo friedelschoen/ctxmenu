@@ -100,17 +100,17 @@ type Item[T comparable] struct {
 
 /* Menu is a menu- or submenu-window */
 type Menu[T comparable] struct {
-	ctxmenu      *ContextMenu /* context */
-	items        []*Item[T]   /* list of items contained by the menu */
-	first        int          /* index of first element, if scrolled */
-	selected     int          /* index of item currently selected in the menu */
-	overflow     int          /* index of first item out of sight, -1 if not overflowing */
-	x, y         int          /* menu position */
-	w, h         int          /* geometry */
-	win          *sdl.Window  /* menu window to map on the screen */
-	surf         draw.Image   /* hardware-accelerated renderer */
-	caller       *Menu[T]     /* current parent of this window, nil if root-window */
-	itemsChanged bool         /*  */
+	ctxmenu      *ContextMenu   /* context */
+	items        []*Item[T]     /* list of items contained by the menu */
+	first        int            /* index of first element, if scrolled */
+	selected     int            /* index of item currently selected in the menu */
+	overflow     int            /* index of first item out of sight, -1 if not overflowing */
+	x, y         int            /* menu position */
+	w, h         int            /* geometry */
+	win          *WaylandWindow /* menu window to map on the screen */
+	surf         *image.RGBA    /* rendering surface */
+	caller       *Menu[T]       /* current parent of this window, nil if root-window */
+	itemsChanged bool           /* if the boundaries require updating */
 
 	overflowItemTop    *Item[T]
 	overflowItemBottom *Item[T]
@@ -118,11 +118,13 @@ type Menu[T comparable] struct {
 
 type ContextMenu struct {
 	Config
+	WaylandGlobals
 
 	normal    ColorPair
 	selected  ColorPair
 	border    *color.NRGBA
 	separator *color.NRGBA
+	x, y      int /* initial position */
 
 	font font.Face
 
@@ -358,18 +360,18 @@ func (ctxmenu *ContextMenu) messureText(text string) int {
 func (menu *Menu[T]) updateWindow() error {
 	var err error
 	if menu.win == nil {
-		menu.win, err = sdl.CreateWindow("menu", int32(menu.x), int32(menu.y), int32(menu.w), int32(menu.h), sdl.WINDOW_SHOWN|sdl.WINDOW_POPUP_MENU)
-		if err != nil {
-			return err
-		}
-		menu.surf, err = menu.win.GetSurface()
+		menu.surf = image.NewRGBA(image.Rect(0, 0, menu.w, menu.h))
+		draw.Draw(menu.surf, menu.surf.Rect, image.Black, image.Point{}, draw.Over)
+		menu.win, err = menu.ctxmenu.CreateWindow("menu", menu.surf, menu.x, menu.y)
 		if err != nil {
 			return err
 		}
 	} else {
-		menu.win.SetSize(int32(menu.w), int32(menu.h))
-		menu.win.SetPosition(int32(menu.x), int32(menu.y))
-		menu.win.Show()
+		menu.win.Reposition(menu.x, menu.y)
+		// TODO:
+		// menu.win.SetSize(int32(menu.w), int32(menu.h))
+		// menu.win.SetPosition(int32(menu.x), int32(menu.y))
+		// menu.win.Show()
 	}
 
 	return nil
@@ -385,32 +387,7 @@ func (menu *Menu[T]) show(caller *Menu[T]) error {
 		caller.hideChildren(menu)
 	}
 
-	display, err := menu.win.GetDisplayIndex()
-	if err != nil {
-		sdl.PumpEvents()
-		x, y, _ := sdl.GetGlobalMouseState()
-		nmon, err := sdl.GetNumVideoDisplays()
-		if err != nil || nmon == -1 {
-			display = 0
-		} else {
-			for i := range nmon {
-				mr, err := sdl.GetDisplayBounds(i)
-				if err != nil {
-					continue
-				}
-				if x >= mr.X && x < mr.X+mr.W &&
-					y >= mr.Y && y < mr.Y+mr.H {
-					display = i
-					break
-				}
-			}
-		}
-	}
-
-	mr, err := sdl.GetDisplayBounds(display)
-	if err != nil {
-		return err
-	}
+	mr := menu.ctxmenu.Monitor()
 
 	if menu.itemsChanged {
 		menu.itemsChanged = false
@@ -424,11 +401,11 @@ func (menu *Menu[T]) show(caller *Menu[T]) error {
 			menu.h += item.h
 		}
 
-		if menu.h > int(mr.Y+mr.H) {
+		if menu.h > mr.Max.Y {
 			/* both arrow items */
 			menu.h = (bottomArrow.Rect.Max.Y + menu.ctxmenu.PaddingY*2 + menu.ctxmenu.BorderSize) * 2
 			for i, item := range menu.items {
-				if item.h+menu.h > int(mr.Y+mr.H) {
+				if item.h+menu.h > mr.Max.Y {
 					menu.overflow = i
 					break
 				}
@@ -442,9 +419,9 @@ func (menu *Menu[T]) show(caller *Menu[T]) error {
 		menu.caller = caller
 		menu.x = caller.x + caller.w
 
-		if menu.x < int(mr.X) {
-			menu.x = int(mr.X)
-		} else if menu.x+menu.w > int(mr.X+mr.W) {
+		if menu.x < mr.Min.X {
+			menu.x = mr.Min.X
+		} else if menu.x+menu.w > mr.Max.X {
 			menu.x = caller.x - menu.w
 		}
 		if menu.overflow == -1 {
@@ -458,23 +435,22 @@ func (menu *Menu[T]) show(caller *Menu[T]) error {
 			}
 		}
 	} else if menu.x == -1 || menu.y == -1 {
-		curX, curY, _ := sdl.GetGlobalMouseState()
-		menu.x = int(curX)
+		menu.x = menu.ctxmenu.x
 		menu.y = 0
 		if menu.overflow == -1 {
-			menu.y = int(curY)
+			menu.y = menu.ctxmenu.y
 		}
 	}
 
-	if menu.x < int(mr.X) {
-		menu.x = int(mr.X)
-	} else if menu.x+menu.w > int(mr.X+mr.W) {
-		menu.x = int(mr.X+mr.W) - menu.w
+	if menu.x < int(mr.Min.X) {
+		menu.x = int(mr.Min.X)
+	} else if menu.x+menu.w > int(mr.Max.X) {
+		menu.x = int(mr.Max.X) - menu.w
 	}
-	if menu.y < int(mr.Y) {
-		menu.y = int(mr.Y)
-	} else if menu.y+menu.h > int(mr.Y+mr.H) {
-		menu.y = int(mr.Y+mr.H) - menu.h
+	if menu.y < int(mr.Min.Y) {
+		menu.y = int(mr.Min.Y)
+	} else if menu.y+menu.h > int(mr.Max.Y) {
+		menu.y = int(mr.Max.Y) - menu.h
 	}
 
 	menu.updateWindow()
@@ -491,7 +467,8 @@ func (menu *Menu[T]) hideChildren(except *Menu[T]) {
 
 func (menu *Menu[T]) hide() {
 	menu.hideChildren(nil)
-	menu.win.Hide()
+	menu.win.Close()
+	menu.win = nil
 }
 
 /* draw overflow button */
@@ -580,7 +557,7 @@ func (menu *Menu[T]) visibleItems(withOverflow bool) iter.Seq2[int, *Item[T]] {
 }
 
 /* draw pixmap for the selected and unselected version of each item on menu */
-func (menu *Menu[T]) draw() error {
+func (menu *Menu[T]) draw() {
 	y := menu.ctxmenu.BorderSize
 
 	for i, item := range menu.visibleItems(true) {
@@ -600,9 +577,9 @@ func (menu *Menu[T]) draw() error {
 
 	/* right */
 	draw.Draw(menu.surf, image.Rect(menu.w-bw, 0, menu.w, menu.h), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
-
-	menu.win.UpdateSurface()
-	return nil
+	fmt.Printf("here %p\n", menu.surf)
+	menu.win.drawFrame()
+	menu.win.surface.Commit()
 }
 
 /* get menu of given window */
@@ -611,8 +588,8 @@ func (menu *Menu[T]) getmenu(win uint32) *Menu[T] {
 		return nil
 	}
 	if menu.win != nil {
-		id, err := menu.win.GetID()
-		if err == nil && id == win {
+		id := menu.win.surface.ID()
+		if id == win {
 			return menu
 		}
 	}
@@ -780,6 +757,7 @@ func (rootmenu *Menu[T]) Run(hover func(T)) (def T, err error) {
 	if err := rootmenu.show(nil); err != nil {
 		return def, err
 	}
+	rootmenu.draw()
 
 	curmenu := rootmenu
 	var buf []byte
@@ -998,10 +976,7 @@ func (rootmenu *Menu[T]) Run(hover func(T)) (def T, err error) {
 			buf = buf[:0]
 		}
 		if action&ActionDraw != 0 {
-			err := curmenu.draw()
-			if err != nil {
-				panic(err)
-			}
+			curmenu.draw()
 		}
 		if action&ActionWarp != 0 {
 			curmenu.warp()
@@ -1010,7 +985,7 @@ func (rootmenu *Menu[T]) Run(hover func(T)) (def T, err error) {
 	}
 }
 
-func XmenuInit(conf Config) (*ContextMenu, error) {
+func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 	var ctxmenu ContextMenu
 	/* initializers */
 	var err error
@@ -1043,5 +1018,7 @@ func XmenuInit(conf Config) (*ContextMenu, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	ctxmenu.InitWayland(wlDisplay)
 	return &ctxmenu, err
 }

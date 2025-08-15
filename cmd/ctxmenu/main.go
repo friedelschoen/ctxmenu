@@ -14,7 +14,7 @@ import (
 func main() {
 	sdl.VideoInit("")
 
-	xmenu, err := ctxmenu.XmenuInit(ctxmenu.Config{
+	xmenu, err := ctxmenu.CtxMenuInit(ctxmenu.Config{
 		/* font, separate different fonts with comma */
 		FontName: "monospace:size=12",
 
@@ -45,7 +45,7 @@ func main() {
 		/* area around the icon, the triangle and the separator */
 		PaddingX: 4,
 		PaddingY: 4,
-	})
+	}, "")
 	if err != nil {
 		log.Fatalln(err)
 	}
