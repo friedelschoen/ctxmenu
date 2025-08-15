@@ -1,15 +1,19 @@
 package ctxmenu
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
+	"log"
 	"os"
 	"strconv"
 	"time"
 	"unicode"
 
+	"github.com/friedelschoen/ctxmenu/proto"
+	"github.com/friedelschoen/wayland"
 	"github.com/veandco/go-sdl2/sdl"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
@@ -68,7 +72,6 @@ type Config struct {
 
 type ContextMenu struct {
 	Config
-	WaylandGlobals
 
 	normal    ColorPair
 	selected  ColorPair
@@ -82,6 +85,18 @@ type ContextMenu struct {
 	disableIcons bool /* whether to disable icons */
 
 	seen bool /* if the cursor is seen above menu */
+
+	conn       *wayland.Conn
+	display    *proto.Display
+	registry   *proto.Registry
+	compositor *proto.Compositor
+	seat       *proto.Seat
+	layerShell *proto.LayerShell
+	shm        *proto.Shm
+	output     *proto.Output
+
+	monOffset image.Point
+	monSize   image.Point
 }
 
 func parseFontString(s string) (font.Face, error) {
@@ -184,6 +199,88 @@ func (ctxmenu *ContextMenu) messureText(text string) int {
 		width += advance
 	}
 	return width.Ceil()
+}
+
+func createTmpfile(size int64) (*os.File, error) {
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		return nil, errors.New("XDG_RUNTIME_DIR is not defined in env")
+	}
+	file, err := os.CreateTemp(dir, "wl_shm_go_*")
+	if err != nil {
+		return nil, err
+	}
+	err = file.Truncate(size)
+	if err != nil {
+		return nil, err
+	}
+	err = os.Remove(file.Name())
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
+func (ctxmenu *ContextMenu) InitWayland(wlDisplay string) {
+	var err error
+	ctxmenu.conn, err = wayland.Connect(wlDisplay)
+	if err != nil {
+		log.Fatalf("unable to connect to wayland server: %v", err)
+	}
+
+	// Connect to wayland server
+	ctxmenu.display = proto.NewDisplay(&proto.DisplayHandlers{
+		OnError: func(evt wayland.Event) {
+			e := evt.(*proto.DisplayErrorEvent)
+			log.Fatalf("display error event on %s: [%d] %s\n", e.ObjectId.Name(), e.Code, e.Message)
+		},
+	})
+	/* manually registing display */
+	ctxmenu.conn.Register(ctxmenu.display)
+
+	ctxmenu.compositor = proto.NewCompositor(nil)
+	ctxmenu.shm = proto.NewShm(nil)
+	ctxmenu.seat = proto.NewSeat(nil)
+	ctxmenu.layerShell = proto.NewLayerShell(nil)
+	ctxmenu.output = proto.NewOutput(&proto.OutputHandlers{
+		OnGeometry: func(evt wayland.Event) {
+			e := evt.(*proto.OutputGeometryEvent)
+			ctxmenu.monOffset = image.Point{int(e.X), int(e.Y)}
+		},
+		OnMode: func(evt wayland.Event) {
+			e := evt.(*proto.OutputModeEvent)
+			ctxmenu.monSize = image.Point{int(e.Width), int(e.Height)}
+		},
+	})
+	reg := wayland.Registrar{ctxmenu.compositor, ctxmenu.shm, ctxmenu.seat, ctxmenu.layerShell, ctxmenu.output}
+
+	// Get global interfaces registry
+	ctxmenu.registry = ctxmenu.display.GetRegistry(&proto.RegistryHandlers{
+		OnGlobal: reg.Handler,
+	})
+
+	// Wait for interfaces to register
+	ctxmenu.sync()
+}
+
+func (ctxmenu *ContextMenu) sync() {
+	done := make(chan struct{})
+	// Get display sync callback
+	callback := ctxmenu.display.Sync(&proto.CallbackHandlers{
+		OnDone: func(_ wayland.Event) {
+			done <- struct{}{}
+		},
+	})
+	defer callback.Destroy()
+
+	<-done
+}
+
+func (ctxmenu *ContextMenu) Monitor() image.Rectangle {
+	return image.Rectangle{
+		ctxmenu.monOffset,
+		ctxmenu.monOffset.Add(ctxmenu.monSize),
+	}
 }
 
 /* run event loop */

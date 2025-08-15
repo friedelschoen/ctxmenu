@@ -10,11 +10,15 @@ import (
 	"image/png"
 	"io"
 	"iter"
+	"log"
 	"os"
 	"path"
 	"strings"
+	"syscall"
 
 	"github.com/KononK/resize"
+	"github.com/friedelschoen/ctxmenu/proto"
+	"github.com/friedelschoen/wayland"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -43,20 +47,26 @@ type Item[T comparable] struct {
 
 /* Menu is a menu- or submenu-window */
 type Menu[T comparable] struct {
-	ctxmenu      *ContextMenu   /* context */
-	items        []*Item[T]     /* list of items contained by the menu */
-	first        int            /* index of first element, if scrolled */
-	selected     int            /* index of item currently selected in the menu */
-	overflow     int            /* index of first item out of sight, -1 if not overflowing */
-	x, y         int            /* menu position */
-	w, h         int            /* geometry */
-	win          *WaylandWindow /* menu window to map on the screen */
-	surf         *image.RGBA    /* rendering surface */
-	caller       *Menu[T]       /* current parent of this window, nil if root-window */
-	itemsChanged bool           /* if the boundaries require updating */
+	ctxmenu      *ContextMenu /* context */
+	items        []*Item[T]   /* list of items contained by the menu */
+	first        int          /* index of first element, if scrolled */
+	selected     int          /* index of item currently selected in the menu */
+	overflow     int          /* index of first item out of sight, -1 if not overflowing */
+	x, y         int          /* menu position */
+	w, h         int          /* geometry */
+	surf         *image.RGBA  /* rendering surface */
+	caller       *Menu[T]     /* current parent of this window, nil if root-window */
+	itemsChanged bool         /* if the boundaries require updating */
 
 	overflowItemTop    *Item[T]
 	overflowItemBottom *Item[T]
+
+	exit         bool
+	surface      *proto.WlSurface
+	layerSurface *proto.LayerSurface
+
+	file *os.File
+	pool *proto.ShmPool
 }
 
 /* MakeMenu allocates a menu and create its window */
@@ -181,16 +191,47 @@ func (item *Item[T]) setSubmenu(sub *Menu[T]) {
 }
 
 func (menu *Menu[T]) updateWindow() error {
-	var err error
-	if menu.win == nil {
+	if menu.surface == nil {
 		menu.surf = image.NewRGBA(image.Rect(0, 0, menu.w, menu.h))
 		draw.Draw(menu.surf, menu.surf.Rect, image.Black, image.Point{}, draw.Over)
-		menu.win, err = menu.ctxmenu.CreateWindow("menu", menu.surf, menu.x, menu.y)
-		if err != nil {
-			return err
-		}
+
+		// Create a wl_surface for toplevel menudow
+		menu.surface = menu.ctxmenu.compositor.CreateSurface(nil)
+
+		// zwlr_layer_shell_v1.get_layer_surface(surface, output, layer, namespace)
+		menu.layerSurface = menu.ctxmenu.layerShell.GetLayerSurface(menu.surface, nil, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
+			// Listen for configure/closed
+			OnConfigure: func(ev wayland.Event) {
+				e := ev.(*proto.LayerSurfaceConfigureEvent)
+				// Ack first (required)
+				menu.layerSurface.AckConfigure(e.Serial)
+
+				// If compositor provides width/height > 0, you can resize your buffer here.
+				// For now we just attach whatever frame we have.
+				menu.drawFrame()
+				menu.surface.Commit()
+			},
+			OnClosed: func(_ wayland.Event) {
+				menu.exit = true
+			},
+		})
+
+		// Typical “popup” anchoring: top-left (change as you like)
+		menu.layerSurface.SetAnchor(proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorLeft)
+
+		// Desired size — compositor may override via configure.
+		// If you want the surface to size to your buffer, set 0,0 here; otherwise set a hint.
+		menu.layerSurface.SetSize(uint32(menu.surf.Rect.Dx()), uint32(menu.surf.Rect.Dy()))
+
+		// Optional: Make it ignore struts (don’t reserve space like a panel)
+		// -1 means “auto” exclusive zone; 0 means none. For a popup-like surface, 0 is typical.
+		menu.layerSurface.SetExclusiveZone(0)
+
+		// Commit the state changes (title & appID) to the server
+		menu.surface.Commit()
+
+		menu.openFile()
 	} else {
-		menu.win.Reposition(menu.x, menu.y)
 		// TODO:
 		// menu.win.SetSize(int32(menu.w), int32(menu.h))
 		// menu.win.SetPosition(int32(menu.x), int32(menu.y))
@@ -290,8 +331,14 @@ func (menu *Menu[T]) hideChildren(except *Menu[T]) {
 
 func (menu *Menu[T]) hide() {
 	menu.hideChildren(nil)
-	menu.win.Close()
-	menu.win = nil
+	if menu.surface != nil {
+		menu.surface.Destroy()
+		menu.surface = nil
+	}
+	if menu.layerSurface != nil {
+		menu.layerSurface.Destroy()
+		menu.layerSurface = nil
+	}
 }
 
 /* draw overflow button */
@@ -401,8 +448,8 @@ func (menu *Menu[T]) draw() {
 	/* right */
 	draw.Draw(menu.surf, image.Rect(menu.w-bw, 0, menu.w, menu.h), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
 	fmt.Printf("here %p\n", menu.surf)
-	menu.win.drawFrame()
-	menu.win.surface.Commit()
+	menu.drawFrame()
+	menu.surface.Commit()
 }
 
 /* get menu of given window */
@@ -410,8 +457,8 @@ func (menu *Menu[T]) getmenu(win uint32) *Menu[T] {
 	if menu == nil {
 		return nil
 	}
-	if menu.win != nil {
-		id := menu.win.surface.ID()
+	if menu.surface != nil {
+		id := menu.surface.ID()
 		if id == win {
 			return menu
 		}
@@ -573,4 +620,39 @@ func (menu *Menu[T]) warp() bool {
 		y += item.h
 	}
 	return false
+}
+
+func (menu *Menu[T]) openFile() {
+	if menu.surf == nil {
+		return
+	}
+
+	size := len(menu.surf.Pix)
+
+	var err error
+	menu.file, err = createTmpfile(int64(size))
+	if err != nil {
+		log.Fatalf("unable to create a temporary file: %v", err)
+	}
+	// defer file.Close()
+
+	fmt.Printf("before: %p\n", menu.surf.Pix)
+	menu.surf.Pix, err = syscall.Mmap(int(menu.file.Fd()), 0, size, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	if err != nil {
+		log.Fatalf("unable to create mapping: %v", err)
+	}
+	fmt.Printf("after: %p\n", menu.surf.Pix)
+
+	menu.pool = menu.ctxmenu.shm.CreatePool(int(menu.file.Fd()), int32(size), nil)
+}
+
+func (menu *Menu[T]) drawFrame() {
+	buf := menu.pool.CreateBuffer(0, int32(menu.surf.Rect.Dx()), int32(menu.surf.Rect.Dy()), int32(menu.surf.Stride), proto.ShmFormatAbgr8888, &proto.BufferHandlers{
+		OnRelease: func(e wayland.Event) {
+			fmt.Println("released!")
+			e.Proxy().(*proto.Buffer).Destroy()
+		},
+	})
+
+	menu.surface.Attach(buf, 0, 0)
 }
