@@ -91,7 +91,7 @@ func main() {
 		}
 	}
 
-	res, err := rootmenu.Run(func(s string) {
+	res, err := ctxmenu.Run(rootmenu, func(s string) {
 		fmt.Printf("\t%s\n", s)
 	})
 	if err != nil {
