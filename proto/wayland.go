@@ -1597,7 +1597,7 @@ func (e ShmFormat) String() string {
 //	argb8888 and xrgb8888.
 type ShmFormatEvent struct {
 	proxy runtime.Proxy
-	Format uint32
+	Format ShmFormat
 }
 
 func (e *ShmFormatEvent) Proxy() runtime.Proxy {
@@ -1615,7 +1615,7 @@ func (i *Shm) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &ShmFormatEvent{}
 		e.proxy = i
 		l := 0
-		e.Format = runtime.Uint32(data[l : l+4])
+		e.Format = ShmFormat(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnFormat(e)
 	}
@@ -2020,7 +2020,7 @@ func (e *DataOfferOfferEvent) Proxy() runtime.Proxy {
 //	wl_data_source.set_actions.
 type DataOfferSourceActionsEvent struct {
 	proxy runtime.Proxy
-	SourceActions uint32
+	SourceActions DataDeviceManagerDndAction
 }
 
 func (e *DataOfferSourceActionsEvent) Proxy() runtime.Proxy {
@@ -2066,7 +2066,7 @@ func (e *DataOfferSourceActionsEvent) Proxy() runtime.Proxy {
 //	must happen before the call to wl_data_offer.finish.
 type DataOfferActionEvent struct {
 	proxy runtime.Proxy
-	DndAction uint32
+	DndAction DataDeviceManagerDndAction
 }
 
 func (e *DataOfferActionEvent) Proxy() runtime.Proxy {
@@ -2096,7 +2096,7 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &DataOfferSourceActionsEvent{}
 		e.proxy = i
 		l := 0
-		e.SourceActions = runtime.Uint32(data[l : l+4])
+		e.SourceActions = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnSourceActions(e)
 	case 2:
@@ -2106,7 +2106,7 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &DataOfferActionEvent{}
 		e.proxy = i
 		l := 0
-		e.DndAction = runtime.Uint32(data[l : l+4])
+		e.DndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnAction(e)
 	}
@@ -2384,7 +2384,7 @@ func (e *DataSourceDndFinishedEvent) Proxy() runtime.Proxy {
 //	they reflect the current action.
 type DataSourceActionEvent struct {
 	proxy runtime.Proxy
-	DndAction uint32
+	DndAction DataDeviceManagerDndAction
 }
 
 func (e *DataSourceActionEvent) Proxy() runtime.Proxy {
@@ -2451,7 +2451,7 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &DataSourceActionEvent{}
 		e.proxy = i
 		l := 0
-		e.DndAction = runtime.Uint32(data[l : l+4])
+		e.DndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnAction(e)
 	}
@@ -3720,7 +3720,7 @@ func (e *ShellSurfacePingEvent) Proxy() runtime.Proxy {
 //	in surface-local coordinates.
 type ShellSurfaceConfigureEvent struct {
 	proxy runtime.Proxy
-	Edges uint32
+	Edges ShellSurfaceResize
 	Width int32
 	Height int32
 }
@@ -3763,7 +3763,7 @@ func (i *ShellSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &ShellSurfaceConfigureEvent{}
 		e.proxy = i
 		l := 0
-		e.Edges = runtime.Uint32(data[l : l+4])
+		e.Edges = ShellSurfaceResize(runtime.Uint32(data[l : l+4]))
 		l += 4
 		e.Width = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
@@ -4573,7 +4573,7 @@ func (e *WlSurfacePreferredBufferScaleEvent) Proxy() runtime.Proxy {
 //	surface buffer more efficiently.
 type WlSurfacePreferredBufferTransformEvent struct {
 	proxy runtime.Proxy
-	Transform uint32
+	Transform OutputTransform
 }
 
 func (e *WlSurfacePreferredBufferTransformEvent) Proxy() runtime.Proxy {
@@ -4621,7 +4621,7 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &WlSurfacePreferredBufferTransformEvent{}
 		e.proxy = i
 		l := 0
-		e.Transform = runtime.Uint32(data[l : l+4])
+		e.Transform = OutputTransform(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnPreferredBufferTransform(e)
 	}
@@ -4866,7 +4866,7 @@ func (e SeatError) String() string {
 //	keyboard and touch capabilities, respectively.
 type SeatCapabilitiesEvent struct {
 	proxy runtime.Proxy
-	Capabilities uint32
+	Capabilities SeatCapability
 }
 
 func (e *SeatCapabilitiesEvent) Proxy() runtime.Proxy {
@@ -4911,7 +4911,7 @@ func (i *Seat) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &SeatCapabilitiesEvent{}
 		e.proxy = i
 		l := 0
-		e.Capabilities = runtime.Uint32(data[l : l+4])
+		e.Capabilities = SeatCapability(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnCapabilities(e)
 	case 1:
@@ -5343,7 +5343,7 @@ type PointerButtonEvent struct {
 	Serial uint32
 	Time uint32
 	Button uint32
-	State uint32
+	State PointerButtonState
 }
 
 func (e *PointerButtonEvent) Proxy() runtime.Proxy {
@@ -5371,7 +5371,7 @@ func (e *PointerButtonEvent) Proxy() runtime.Proxy {
 type PointerAxisEvent struct {
 	proxy runtime.Proxy
 	Time uint32
-	Axis uint32
+	Axis PointerAxis
 	Value float64
 }
 
@@ -5452,7 +5452,7 @@ func (e *PointerFrameEvent) Proxy() runtime.Proxy {
 //	not guaranteed.
 type PointerAxisSourceEvent struct {
 	proxy runtime.Proxy
-	AxisSource uint32
+	AxisSource PointerAxisSource
 }
 
 func (e *PointerAxisSourceEvent) Proxy() runtime.Proxy {
@@ -5478,7 +5478,7 @@ func (e *PointerAxisSourceEvent) Proxy() runtime.Proxy {
 type PointerAxisStopEvent struct {
 	proxy runtime.Proxy
 	Time uint32
-	Axis uint32
+	Axis PointerAxis
 }
 
 func (e *PointerAxisStopEvent) Proxy() runtime.Proxy {
@@ -5519,7 +5519,7 @@ func (e *PointerAxisStopEvent) Proxy() runtime.Proxy {
 //	not guaranteed.
 type PointerAxisDiscreteEvent struct {
 	proxy runtime.Proxy
-	Axis uint32
+	Axis PointerAxis
 	Discrete int32
 }
 
@@ -5552,7 +5552,7 @@ func (e *PointerAxisDiscreteEvent) Proxy() runtime.Proxy {
 //	not guaranteed.
 type PointerAxisValue120Event struct {
 	proxy runtime.Proxy
-	Axis uint32
+	Axis PointerAxis
 	Value120 int32
 }
 
@@ -5599,8 +5599,8 @@ func (e *PointerAxisValue120Event) Proxy() runtime.Proxy {
 //	guaranteed.
 type PointerAxisRelativeDirectionEvent struct {
 	proxy runtime.Proxy
-	Axis uint32
-	Direction uint32
+	Axis PointerAxis
+	Direction PointerAxisRelativeDirection
 }
 
 func (e *PointerAxisRelativeDirectionEvent) Proxy() runtime.Proxy {
@@ -5666,7 +5666,7 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Button = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.State = runtime.Uint32(data[l : l+4])
+		e.State = PointerButtonState(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnButton(e)
 	case 4:
@@ -5678,7 +5678,7 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Axis = runtime.Uint32(data[l : l+4])
+		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
 		e.Value = runtime.Fixed(data[l : l+4])
 		l += 4
@@ -5697,7 +5697,7 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &PointerAxisSourceEvent{}
 		e.proxy = i
 		l := 0
-		e.AxisSource = runtime.Uint32(data[l : l+4])
+		e.AxisSource = PointerAxisSource(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnAxisSource(e)
 	case 7:
@@ -5709,7 +5709,7 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Axis = runtime.Uint32(data[l : l+4])
+		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnAxisStop(e)
 	case 8:
@@ -5719,7 +5719,7 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &PointerAxisDiscreteEvent{}
 		e.proxy = i
 		l := 0
-		e.Axis = runtime.Uint32(data[l : l+4])
+		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
 		e.Discrete = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
@@ -5731,7 +5731,7 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &PointerAxisValue120Event{}
 		e.proxy = i
 		l := 0
-		e.Axis = runtime.Uint32(data[l : l+4])
+		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
 		e.Value120 = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
@@ -5743,9 +5743,9 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &PointerAxisRelativeDirectionEvent{}
 		e.proxy = i
 		l := 0
-		e.Axis = runtime.Uint32(data[l : l+4])
+		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Direction = runtime.Uint32(data[l : l+4])
+		e.Direction = PointerAxisRelativeDirection(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnAxisRelativeDirection(e)
 	}
@@ -5915,7 +5915,7 @@ func (e KeyboardKeyState) String() string {
 //	the recipient, as MAP_SHARED may fail.
 type KeyboardKeymapEvent struct {
 	proxy runtime.Proxy
-	Format uint32
+	Format KeyboardKeymapFormat
 	Fd int
 	Size uint32
 }
@@ -6002,7 +6002,7 @@ type KeyboardKeyEvent struct {
 	Serial uint32
 	Time uint32
 	Key uint32
-	State uint32
+	State KeyboardKeyState
 }
 
 func (e *KeyboardKeyEvent) Proxy() runtime.Proxy {
@@ -6075,7 +6075,7 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &KeyboardKeymapEvent{}
 		e.proxy = i
 		l := 0
-		e.Format = runtime.Uint32(data[l : l+4])
+		e.Format = KeyboardKeymapFormat(runtime.Uint32(data[l : l+4]))
 		l += 4
 		e.Fd = fd
 		e.Size = runtime.Uint32(data[l : l+4])
@@ -6123,7 +6123,7 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Key = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.State = runtime.Uint32(data[l : l+4])
+		e.State = KeyboardKeyState(runtime.Uint32(data[l : l+4]))
 		l += 4
 		i.handlers.OnKey(e)
 	case 4:
@@ -6788,7 +6788,7 @@ func (e *OutputGeometryEvent) Proxy() runtime.Proxy {
 //	refresh rate or the size.
 type OutputModeEvent struct {
 	proxy runtime.Proxy
-	Flags uint32
+	Flags OutputMode
 	Width int32
 	Height int32
 	Refresh int32
@@ -6945,7 +6945,7 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) {
 		e := &OutputModeEvent{}
 		e.proxy = i
 		l := 0
-		e.Flags = runtime.Uint32(data[l : l+4])
+		e.Flags = OutputMode(runtime.Uint32(data[l : l+4]))
 		l += 4
 		e.Width = int32(runtime.Uint32(data[l : l+4]))
 		l += 4

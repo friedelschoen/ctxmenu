@@ -63,7 +63,7 @@ type Menu[T comparable] struct {
 
 	exit         bool
 	surface      *proto.WlSurface
-	layerSurface *proto.LayerSurface
+	layersurface *proto.LayerSurface
 
 	file *os.File
 	pool *proto.ShmPool
@@ -196,36 +196,38 @@ func (menu *Menu[T]) updateWindow() error {
 		draw.Draw(menu.surf, menu.surf.Rect, image.Black, image.Point{}, draw.Over)
 
 		// Create a wl_surface for toplevel menudow
-		menu.surface = menu.ctxmenu.compositor.CreateSurface(nil)
+		menu.surface = menu.ctxmenu.compositor.CreateSurface(&proto.WlSurfaceHandlers{
+			OnEnter: menu.ctxmenu.pushEvent,
+			OnLeave: menu.ctxmenu.pushEvent,
+		})
 
 		// zwlr_layer_shell_v1.get_layer_surface(surface, output, layer, namespace)
-		menu.layerSurface = menu.ctxmenu.layerShell.GetLayerSurface(menu.surface, nil, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
+		menu.layersurface = menu.ctxmenu.layerShell.GetLayerSurface(menu.surface, nil, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
 			// Listen for configure/closed
 			OnConfigure: func(ev wayland.Event) {
 				e := ev.(*proto.LayerSurfaceConfigureEvent)
 				// Ack first (required)
-				menu.layerSurface.AckConfigure(e.Serial)
+				menu.layersurface.AckConfigure(e.Serial)
 
 				// If compositor provides width/height > 0, you can resize your buffer here.
 				// For now we just attach whatever frame we have.
 				menu.drawFrame()
 				menu.surface.Commit()
 			},
-			OnClosed: func(_ wayland.Event) {
-				menu.exit = true
-			},
+			OnClosed: menu.ctxmenu.pushEvent,
 		})
+		menu.layersurface.SetKeyboardInteractivity(proto.LayerSurfaceKeyboardInteractivityOnDemand)
 
 		// Typical “popup” anchoring: top-left (change as you like)
-		menu.layerSurface.SetAnchor(proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorLeft)
+		menu.layersurface.SetAnchor(proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorLeft)
 
 		// Desired size — compositor may override via configure.
 		// If you want the surface to size to your buffer, set 0,0 here; otherwise set a hint.
-		menu.layerSurface.SetSize(uint32(menu.surf.Rect.Dx()), uint32(menu.surf.Rect.Dy()))
+		menu.layersurface.SetSize(uint32(menu.surf.Rect.Dx()), uint32(menu.surf.Rect.Dy()))
 
 		// Optional: Make it ignore struts (don’t reserve space like a panel)
 		// -1 means “auto” exclusive zone; 0 means none. For a popup-like surface, 0 is typical.
-		menu.layerSurface.SetExclusiveZone(0)
+		menu.layersurface.SetExclusiveZone(0)
 
 		// Commit the state changes (title & appID) to the server
 		menu.surface.Commit()
@@ -335,9 +337,9 @@ func (menu *Menu[T]) hide() {
 		menu.surface.Destroy()
 		menu.surface = nil
 	}
-	if menu.layerSurface != nil {
-		menu.layerSurface.Destroy()
-		menu.layerSurface = nil
+	if menu.layersurface != nil {
+		menu.layersurface.Destroy()
+		menu.layersurface = nil
 	}
 }
 

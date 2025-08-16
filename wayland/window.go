@@ -157,7 +157,7 @@ func (app *Window) drawFrame() *proto.Buffer {
 func (app *Window) HandleSeatCapabilities(evt wayland.Event) {
 	e := evt.(*proto.SeatCapabilitiesEvent)
 
-	havePointer := (e.Capabilities & uint32(proto.SeatCapabilityPointer)) != 0
+	havePointer := (e.Capabilities & proto.SeatCapabilityPointer) != 0
 
 	if havePointer && app.pointer == nil {
 		app.attachPointer()
@@ -165,7 +165,7 @@ func (app *Window) HandleSeatCapabilities(evt wayland.Event) {
 		app.releasePointer()
 	}
 
-	haveKeyboard := (e.Capabilities & uint32(proto.SeatCapabilityKeyboard)) != 0
+	haveKeyboard := (e.Capabilities & proto.SeatCapabilityKeyboard) != 0
 
 	if haveKeyboard && app.keyboard == nil {
 		app.attachKeyboard()
