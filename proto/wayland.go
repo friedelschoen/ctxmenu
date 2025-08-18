@@ -186,13 +186,25 @@ func (e DisplayError) String() string {
 //	own set of error codes.  The message is a brief description
 //	of the error, for (debugging) convenience.
 type DisplayErrorEvent struct {
-	proxy runtime.Proxy
-	// ObjectId object where the error occurred
-	ObjectId runtime.Proxy
-	// Code error code
-	Code uint32
-	// Message error description
-	Message string
+	objectId runtime.Proxy
+	code     uint32
+	message  string
+	proxy    runtime.Proxy
+}
+
+// ObjectId object where the error occurred
+func (e *DisplayErrorEvent) ObjectId() runtime.Proxy {
+	return e.objectId
+}
+
+// Code error code
+func (e *DisplayErrorEvent) Code() uint32 {
+	return e.code
+}
+
+// Message error description
+func (e *DisplayErrorEvent) Message() string {
+	return e.message
 }
 
 func (e *DisplayErrorEvent) Proxy() runtime.Proxy {
@@ -207,9 +219,13 @@ func (e *DisplayErrorEvent) Proxy() runtime.Proxy {
 //	seen the delete request. When the client receives this event,
 //	it will know that it can safely reuse the object ID.
 type DisplayDeleteIdEvent struct {
+	id    uint32
 	proxy runtime.Proxy
-	// Id deleted object ID
-	Id uint32
+}
+
+// Id deleted object ID
+func (e *DisplayDeleteIdEvent) Id() uint32 {
+	return e.id
 }
 
 func (e *DisplayDeleteIdEvent) Proxy() runtime.Proxy {
@@ -227,13 +243,13 @@ func (i *Display) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &DisplayErrorEvent{}
 		e.proxy = i
 		l := 0
-		e.ObjectId = i.Conn().GetProxy(runtime.Uint32(data[l : l+4]))
+		e.objectId = i.Conn().GetProxy(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Code = runtime.Uint32(data[l : l+4])
+		e.code = runtime.Uint32(data[l : l+4])
 		l += 4
 		messageLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.Message = runtime.String(data[l : l+messageLen])
+		e.message = runtime.String(data[l : l+messageLen])
 		l += messageLen
 		if i.handlers != nil && i.handlers.OnError != nil {
 			i.handlers.OnError(e)
@@ -247,7 +263,7 @@ func (i *Display) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &DisplayDeleteIdEvent{}
 		e.proxy = i
 		l := 0
-		e.Id = runtime.Uint32(data[l : l+4])
+		e.id = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnDeleteId != nil {
 			i.handlers.OnDeleteId(e)
@@ -362,20 +378,29 @@ func (i *Registry) Destroy() error {
 //	the given name is now available, and it implements the
 //	given version of the given interface.
 type RegistryGlobalEvent struct {
-	proxy runtime.Proxy
-	// Name numeric name of the global object
-	Name uint32
-	// Interface interface implemented by the object
-	Interface string
-	// Version interface version
-	Version uint32
+	name       uint32
+	_interface string
+	version    uint32
+	proxy      runtime.Proxy
+}
+
+// Name numeric name of the global object
+func (e *RegistryGlobalEvent) Name() uint32 {
+	return e.name
+}
+
+// Interface interface implemented by the object
+func (e *RegistryGlobalEvent) Interface() string {
+	return e._interface
+}
+
+// Version interface version
+func (e *RegistryGlobalEvent) Version() uint32 {
+	return e.version
 }
 
 func (e *RegistryGlobalEvent) Proxy() runtime.Proxy {
 	return e.proxy
-}
-func (e *RegistryGlobalEvent) BindInterface() (uint32, string, uint32) {
-	return e.Name, e.Interface, e.Version
 }
 
 // RegistryGlobalRemoveEvent : announce removal of global object
@@ -391,9 +416,13 @@ func (e *RegistryGlobalEvent) BindInterface() (uint32, string, uint32) {
 //	ignored until the client destroys it, to avoid races between
 //	the global going away and a client sending a request to it.
 type RegistryGlobalRemoveEvent struct {
+	name  uint32
 	proxy runtime.Proxy
-	// Name numeric name of the global object
-	Name uint32
+}
+
+// Name numeric name of the global object
+func (e *RegistryGlobalRemoveEvent) Name() uint32 {
+	return e.name
 }
 
 func (e *RegistryGlobalRemoveEvent) Proxy() runtime.Proxy {
@@ -411,13 +440,13 @@ func (i *Registry) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &RegistryGlobalEvent{}
 		e.proxy = i
 		l := 0
-		e.Name = runtime.Uint32(data[l : l+4])
+		e.name = runtime.Uint32(data[l : l+4])
 		l += 4
-		interfaceLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
+		_interfaceLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.Interface = runtime.String(data[l : l+interfaceLen])
-		l += interfaceLen
-		e.Version = runtime.Uint32(data[l : l+4])
+		e._interface = runtime.String(data[l : l+_interfaceLen])
+		l += _interfaceLen
+		e.version = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnGlobal != nil {
 			i.handlers.OnGlobal(e)
@@ -431,7 +460,7 @@ func (i *Registry) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &RegistryGlobalRemoveEvent{}
 		e.proxy = i
 		l := 0
-		e.Name = runtime.Uint32(data[l : l+4])
+		e.name = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnGlobalRemove != nil {
 			i.handlers.OnGlobalRemove(e)
@@ -480,9 +509,13 @@ func (i *Callback) Destroy() error {
 //
 //	Notify the client when the related request is done.
 type CallbackDoneEvent struct {
-	proxy runtime.Proxy
-	// CallbackData request-specific data for the callback
-	CallbackData uint32
+	callbackData uint32
+	proxy        runtime.Proxy
+}
+
+// CallbackData request-specific data for the callback
+func (e *CallbackDoneEvent) CallbackData() uint32 {
+	return e.callbackData
 }
 
 func (e *CallbackDoneEvent) Proxy() runtime.Proxy {
@@ -500,7 +533,7 @@ func (i *Callback) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &CallbackDoneEvent{}
 		e.proxy = i
 		l := 0
-		e.CallbackData = runtime.Uint32(data[l : l+4])
+		e.callbackData = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnDone != nil {
 			i.handlers.OnDone(e)
@@ -1625,9 +1658,13 @@ func (e ShmFormat) String() string {
 //	can be used for buffers. Known formats include
 //	argb8888 and xrgb8888.
 type ShmFormatEvent struct {
-	proxy runtime.Proxy
-	// Format buffer pixel format
-	Format ShmFormat
+	format ShmFormat
+	proxy  runtime.Proxy
+}
+
+// Format buffer pixel format
+func (e *ShmFormatEvent) Format() ShmFormat {
+	return e.format
 }
 
 func (e *ShmFormatEvent) Proxy() runtime.Proxy {
@@ -1645,7 +1682,7 @@ func (i *Shm) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.
 		e := &ShmFormatEvent{}
 		e.proxy = i
 		l := 0
-		e.Format = ShmFormat(runtime.Uint32(data[l : l+4]))
+		e.format = ShmFormat(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnFormat != nil {
 			i.handlers.OnFormat(e)
@@ -2042,9 +2079,13 @@ func (e DataOfferError) String() string {
 //	Sent immediately after creating the wl_data_offer object.  One
 //	event per offered mime type.
 type DataOfferOfferEvent struct {
-	proxy runtime.Proxy
-	// MimeType offered mime type
-	MimeType string
+	mimeType string
+	proxy    runtime.Proxy
+}
+
+// MimeType offered mime type
+func (e *DataOfferOfferEvent) MimeType() string {
+	return e.mimeType
 }
 
 func (e *DataOfferOfferEvent) Proxy() runtime.Proxy {
@@ -2058,9 +2099,13 @@ func (e *DataOfferOfferEvent) Proxy() runtime.Proxy {
 //	or anytime the source side changes its offered actions through
 //	wl_data_source.set_actions.
 type DataOfferSourceActionsEvent struct {
-	proxy runtime.Proxy
-	// SourceActions actions offered by the data source
-	SourceActions DataDeviceManagerDndAction
+	sourceActions DataDeviceManagerDndAction
+	proxy         runtime.Proxy
+}
+
+// SourceActions actions offered by the data source
+func (e *DataOfferSourceActionsEvent) SourceActions() DataDeviceManagerDndAction {
+	return e.sourceActions
 }
 
 func (e *DataOfferSourceActionsEvent) Proxy() runtime.Proxy {
@@ -2105,9 +2150,13 @@ func (e *DataOfferSourceActionsEvent) Proxy() runtime.Proxy {
 //	final wl_data_offer.set_actions and wl_data_offer.accept requests
 //	must happen before the call to wl_data_offer.finish.
 type DataOfferActionEvent struct {
-	proxy runtime.Proxy
-	// DndAction action selected by the compositor
-	DndAction DataDeviceManagerDndAction
+	dndAction DataDeviceManagerDndAction
+	proxy     runtime.Proxy
+}
+
+// DndAction action selected by the compositor
+func (e *DataOfferActionEvent) DndAction() DataDeviceManagerDndAction {
+	return e.dndAction
 }
 
 func (e *DataOfferActionEvent) Proxy() runtime.Proxy {
@@ -2127,7 +2176,7 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- ru
 		l := 0
 		mimeTypeLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.MimeType = runtime.String(data[l : l+mimeTypeLen])
+		e.mimeType = runtime.String(data[l : l+mimeTypeLen])
 		l += mimeTypeLen
 		if i.handlers != nil && i.handlers.OnOffer != nil {
 			i.handlers.OnOffer(e)
@@ -2141,7 +2190,7 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- ru
 		e := &DataOfferSourceActionsEvent{}
 		e.proxy = i
 		l := 0
-		e.SourceActions = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
+		e.sourceActions = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnSourceActions != nil {
 			i.handlers.OnSourceActions(e)
@@ -2155,7 +2204,7 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- ru
 		e := &DataOfferActionEvent{}
 		e.proxy = i
 		l := 0
-		e.DndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
+		e.dndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnAction != nil {
 			i.handlers.OnAction(e)
@@ -2320,9 +2369,13 @@ func (e DataSourceError) String() string {
 //
 //	Used for feedback during drag-and-drop.
 type DataSourceTargetEvent struct {
-	proxy runtime.Proxy
-	// MimeType mime type accepted by the target
-	MimeType string
+	mimeType string
+	proxy    runtime.Proxy
+}
+
+// MimeType mime type accepted by the target
+func (e *DataSourceTargetEvent) MimeType() string {
+	return e.mimeType
 }
 
 func (e *DataSourceTargetEvent) Proxy() runtime.Proxy {
@@ -2335,11 +2388,19 @@ func (e *DataSourceTargetEvent) Proxy() runtime.Proxy {
 //	specified mime type over the passed file descriptor, then
 //	close it.
 type DataSourceSendEvent struct {
-	proxy runtime.Proxy
-	// MimeType mime type for the data
-	MimeType string
-	// Fd file descriptor for the data
-	Fd int
+	mimeType string
+	fd       int
+	proxy    runtime.Proxy
+}
+
+// MimeType mime type for the data
+func (e *DataSourceSendEvent) MimeType() string {
+	return e.mimeType
+}
+
+// Fd file descriptor for the data
+func (e *DataSourceSendEvent) Fd() int {
+	return e.fd
 }
 
 func (e *DataSourceSendEvent) Proxy() runtime.Proxy {
@@ -2439,9 +2500,13 @@ func (e *DataSourceDndFinishedEvent) Proxy() runtime.Proxy {
 //	Clients can trigger cursor surface changes from this point, so
 //	they reflect the current action.
 type DataSourceActionEvent struct {
-	proxy runtime.Proxy
-	// DndAction action selected by the compositor
-	DndAction DataDeviceManagerDndAction
+	dndAction DataDeviceManagerDndAction
+	proxy     runtime.Proxy
+}
+
+// DndAction action selected by the compositor
+func (e *DataSourceActionEvent) DndAction() DataDeviceManagerDndAction {
+	return e.dndAction
 }
 
 func (e *DataSourceActionEvent) Proxy() runtime.Proxy {
@@ -2461,7 +2526,7 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 		l := 0
 		mimeTypeLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.MimeType = runtime.String(data[l : l+mimeTypeLen])
+		e.mimeType = runtime.String(data[l : l+mimeTypeLen])
 		l += mimeTypeLen
 		if i.handlers != nil && i.handlers.OnTarget != nil {
 			i.handlers.OnTarget(e)
@@ -2480,9 +2545,9 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 		l := 0
 		mimeTypeLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.MimeType = runtime.String(data[l : l+mimeTypeLen])
+		e.mimeType = runtime.String(data[l : l+mimeTypeLen])
 		l += mimeTypeLen
-		e.Fd = fd
+		e.fd = fd
 		if i.handlers != nil && i.handlers.OnSend != nil {
 			i.handlers.OnSend(e)
 		} else if drain != nil {
@@ -2528,7 +2593,7 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 		e := &DataSourceActionEvent{}
 		e.proxy = i
 		l := 0
-		e.DndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
+		e.dndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnAction != nil {
 			i.handlers.OnAction(e)
@@ -2745,9 +2810,13 @@ func (e DataDeviceError) String() string {
 //	object will send out data_offer.offer events to describe the
 //	mime types it offers.
 type DataDeviceDataOfferEvent struct {
+	id    *DataOffer
 	proxy runtime.Proxy
-	// Id the new data_offer object
-	Id *DataOffer
+}
+
+// Id the new data_offer object
+func (e *DataDeviceDataOfferEvent) Id() *DataOffer {
+	return e.id
 }
 
 func (e *DataDeviceDataOfferEvent) Proxy() runtime.Proxy {
@@ -2761,17 +2830,37 @@ func (e *DataDeviceDataOfferEvent) Proxy() runtime.Proxy {
 //	enter time is provided by the x and y arguments, in surface-local
 //	coordinates.
 type DataDeviceEnterEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the enter event
-	Serial uint32
-	// Surface client surface entered
-	Surface *WlSurface
-	// X surface-local x coordinate
-	X float64
-	// Y surface-local y coordinate
-	Y float64
-	// Id source data_offer object
-	Id *DataOffer
+	serial  uint32
+	surface *WlSurface
+	x       float64
+	y       float64
+	id      *DataOffer
+	proxy   runtime.Proxy
+}
+
+// Serial serial number of the enter event
+func (e *DataDeviceEnterEvent) Serial() uint32 {
+	return e.serial
+}
+
+// Surface client surface entered
+func (e *DataDeviceEnterEvent) Surface() *WlSurface {
+	return e.surface
+}
+
+// X surface-local x coordinate
+func (e *DataDeviceEnterEvent) X() float64 {
+	return e.x
+}
+
+// Y surface-local y coordinate
+func (e *DataDeviceEnterEvent) Y() float64 {
+	return e.y
+}
+
+// Id source data_offer object
+func (e *DataDeviceEnterEvent) Id() *DataOffer {
+	return e.id
 }
 
 func (e *DataDeviceEnterEvent) Proxy() runtime.Proxy {
@@ -2798,13 +2887,25 @@ func (e *DataDeviceLeaveEvent) Proxy() runtime.Proxy {
 //	is provided by the x and y arguments, in surface-local
 //	coordinates.
 type DataDeviceMotionEvent struct {
+	time  uint32
+	x     float64
+	y     float64
 	proxy runtime.Proxy
-	// Time timestamp with millisecond granularity
-	Time uint32
-	// X surface-local x coordinate
-	X float64
-	// Y surface-local y coordinate
-	Y float64
+}
+
+// Time timestamp with millisecond granularity
+func (e *DataDeviceMotionEvent) Time() uint32 {
+	return e.time
+}
+
+// X surface-local x coordinate
+func (e *DataDeviceMotionEvent) X() float64 {
+	return e.x
+}
+
+// Y surface-local y coordinate
+func (e *DataDeviceMotionEvent) Y() float64 {
+	return e.y
 }
 
 func (e *DataDeviceMotionEvent) Proxy() runtime.Proxy {
@@ -2849,9 +2950,13 @@ func (e *DataDeviceDropEvent) Proxy() runtime.Proxy {
 //	will be sent.  The client must destroy the previous selection
 //	data_offer, if any, upon receiving this event.
 type DataDeviceSelectionEvent struct {
+	id    *DataOffer
 	proxy runtime.Proxy
-	// Id selection data_offer object
-	Id *DataOffer
+}
+
+// Id selection data_offer object
+func (e *DataDeviceSelectionEvent) Id() *DataOffer {
+	return e.id
 }
 
 func (e *DataDeviceSelectionEvent) Proxy() runtime.Proxy {
@@ -2869,7 +2974,7 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 		e := &DataDeviceDataOfferEvent{}
 		e.proxy = i
 		l := 0
-		e.Id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
+		e.id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
 		l += 4
 		if i.handlers != nil && i.handlers.OnDataOffer != nil {
 			i.handlers.OnDataOffer(e)
@@ -2883,15 +2988,15 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 		e := &DataDeviceEnterEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
+		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
-		e.X = runtime.Fixed(data[l : l+4])
+		e.x = runtime.Fixed(data[l : l+4])
 		l += 4
-		e.Y = runtime.Fixed(data[l : l+4])
+		e.y = runtime.Fixed(data[l : l+4])
 		l += 4
-		e.Id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
+		e.id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
 		l += 4
 		if i.handlers != nil && i.handlers.OnEnter != nil {
 			i.handlers.OnEnter(e)
@@ -2916,11 +3021,11 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 		e := &DataDeviceMotionEvent{}
 		e.proxy = i
 		l := 0
-		e.Time = runtime.Uint32(data[l : l+4])
+		e.time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.X = runtime.Fixed(data[l : l+4])
+		e.x = runtime.Fixed(data[l : l+4])
 		l += 4
-		e.Y = runtime.Fixed(data[l : l+4])
+		e.y = runtime.Fixed(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnMotion != nil {
 			i.handlers.OnMotion(e)
@@ -2945,7 +3050,7 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 		e := &DataDeviceSelectionEvent{}
 		e.proxy = i
 		l := 0
-		e.Id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
+		e.id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
 		l += 4
 		if i.handlers != nil && i.handlers.OnSelection != nil {
 			i.handlers.OnSelection(e)
@@ -3806,9 +3911,13 @@ func (e ShellSurfaceFullscreenMethod) String() string {
 //	Ping a client to check if it is receiving events and sending
 //	requests. A client is expected to reply with a pong request.
 type ShellSurfacePingEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the ping
-	Serial uint32
+	serial uint32
+	proxy  runtime.Proxy
+}
+
+// Serial serial number of the ping
+func (e *ShellSurfacePingEvent) Serial() uint32 {
+	return e.serial
 }
 
 func (e *ShellSurfacePingEvent) Proxy() runtime.Proxy {
@@ -3835,13 +3944,25 @@ func (e *ShellSurfacePingEvent) Proxy() runtime.Proxy {
 //	The width and height arguments specify the size of the window
 //	in surface-local coordinates.
 type ShellSurfaceConfigureEvent struct {
-	proxy runtime.Proxy
-	// Edges how the surface was resized
-	Edges ShellSurfaceResize
-	// Width new width of the surface
-	Width int32
-	// Height new height of the surface
-	Height int32
+	edges  ShellSurfaceResize
+	width  int32
+	height int32
+	proxy  runtime.Proxy
+}
+
+// Edges how the surface was resized
+func (e *ShellSurfaceConfigureEvent) Edges() ShellSurfaceResize {
+	return e.edges
+}
+
+// Width new width of the surface
+func (e *ShellSurfaceConfigureEvent) Width() int32 {
+	return e.width
+}
+
+// Height new height of the surface
+func (e *ShellSurfaceConfigureEvent) Height() int32 {
+	return e.height
 }
 
 func (e *ShellSurfaceConfigureEvent) Proxy() runtime.Proxy {
@@ -3872,7 +3993,7 @@ func (i *ShellSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<-
 		e := &ShellSurfacePingEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnPing != nil {
 			i.handlers.OnPing(e)
@@ -3886,11 +4007,11 @@ func (i *ShellSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<-
 		e := &ShellSurfaceConfigureEvent{}
 		e.proxy = i
 		l := 0
-		e.Edges = ShellSurfaceResize(runtime.Uint32(data[l : l+4]))
+		e.edges = ShellSurfaceResize(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Width = int32(runtime.Uint32(data[l : l+4]))
+		e.width = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Height = int32(runtime.Uint32(data[l : l+4]))
+		e.height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)
@@ -4640,9 +4761,13 @@ func (e WlSurfaceError) String() string {
 //
 //	Note that a surface may be overlapping with zero or more outputs.
 type WlSurfaceEnterEvent struct {
-	proxy runtime.Proxy
-	// Output output entered by the surface
-	Output *Output
+	output *Output
+	proxy  runtime.Proxy
+}
+
+// Output output entered by the surface
+func (e *WlSurfaceEnterEvent) Output() *Output {
+	return e.output
 }
 
 func (e *WlSurfaceEnterEvent) Proxy() runtime.Proxy {
@@ -4661,9 +4786,13 @@ func (e *WlSurfaceEnterEvent) Proxy() runtime.Proxy {
 //	updates even if no enter event has been sent. The frame event should be
 //	used instead.
 type WlSurfaceLeaveEvent struct {
-	proxy runtime.Proxy
-	// Output output left by the surface
-	Output *Output
+	output *Output
+	proxy  runtime.Proxy
+}
+
+// Output output left by the surface
+func (e *WlSurfaceLeaveEvent) Output() *Output {
+	return e.output
 }
 
 func (e *WlSurfaceLeaveEvent) Proxy() runtime.Proxy {
@@ -4685,9 +4814,13 @@ func (e *WlSurfaceLeaveEvent) Proxy() runtime.Proxy {
 //
 //	The compositor shall emit a scale value greater than 0.
 type WlSurfacePreferredBufferScaleEvent struct {
-	proxy runtime.Proxy
-	// Factor preferred scaling factor
-	Factor int32
+	factor int32
+	proxy  runtime.Proxy
+}
+
+// Factor preferred scaling factor
+func (e *WlSurfacePreferredBufferScaleEvent) Factor() int32 {
+	return e.factor
 }
 
 func (e *WlSurfacePreferredBufferScaleEvent) Proxy() runtime.Proxy {
@@ -4706,9 +4839,13 @@ func (e *WlSurfacePreferredBufferScaleEvent) Proxy() runtime.Proxy {
 //	wl_surface.set_buffer_transform might allow the compositor to use the
 //	surface buffer more efficiently.
 type WlSurfacePreferredBufferTransformEvent struct {
-	proxy runtime.Proxy
-	// Transform preferred transform
-	Transform OutputTransform
+	transform OutputTransform
+	proxy     runtime.Proxy
+}
+
+// Transform preferred transform
+func (e *WlSurfacePreferredBufferTransformEvent) Transform() OutputTransform {
+	return e.transform
 }
 
 func (e *WlSurfacePreferredBufferTransformEvent) Proxy() runtime.Proxy {
@@ -4726,7 +4863,7 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- ru
 		e := &WlSurfaceEnterEvent{}
 		e.proxy = i
 		l := 0
-		e.Output = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
+		e.output = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
 		l += 4
 		if i.handlers != nil && i.handlers.OnEnter != nil {
 			i.handlers.OnEnter(e)
@@ -4740,7 +4877,7 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- ru
 		e := &WlSurfaceLeaveEvent{}
 		e.proxy = i
 		l := 0
-		e.Output = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
+		e.output = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
 		l += 4
 		if i.handlers != nil && i.handlers.OnLeave != nil {
 			i.handlers.OnLeave(e)
@@ -4754,7 +4891,7 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- ru
 		e := &WlSurfacePreferredBufferScaleEvent{}
 		e.proxy = i
 		l := 0
-		e.Factor = int32(runtime.Uint32(data[l : l+4]))
+		e.factor = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnPreferredBufferScale != nil {
 			i.handlers.OnPreferredBufferScale(e)
@@ -4768,7 +4905,7 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- ru
 		e := &WlSurfacePreferredBufferTransformEvent{}
 		e.proxy = i
 		l := 0
-		e.Transform = OutputTransform(runtime.Uint32(data[l : l+4]))
+		e.transform = OutputTransform(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnPreferredBufferTransform != nil {
 			i.handlers.OnPreferredBufferTransform(e)
@@ -5016,9 +5153,13 @@ func (e SeatError) String() string {
 //	The above behavior also applies to wl_keyboard and wl_touch with the
 //	keyboard and touch capabilities, respectively.
 type SeatCapabilitiesEvent struct {
-	proxy runtime.Proxy
-	// Capabilities capabilities of the seat
-	Capabilities SeatCapability
+	capabilities SeatCapability
+	proxy        runtime.Proxy
+}
+
+// Capabilities capabilities of the seat
+func (e *SeatCapabilitiesEvent) Capabilities() SeatCapability {
+	return e.capabilities
 }
 
 func (e *SeatCapabilitiesEvent) Proxy() runtime.Proxy {
@@ -5044,9 +5185,13 @@ func (e *SeatCapabilitiesEvent) Proxy() runtime.Proxy {
 //	Compositors may re-use the same seat name if the wl_seat global is
 //	destroyed and re-created later.
 type SeatNameEvent struct {
+	name  string
 	proxy runtime.Proxy
-	// Name seat identifier
-	Name string
+}
+
+// Name seat identifier
+func (e *SeatNameEvent) Name() string {
+	return e.name
 }
 
 func (e *SeatNameEvent) Proxy() runtime.Proxy {
@@ -5064,7 +5209,7 @@ func (i *Seat) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime
 		e := &SeatCapabilitiesEvent{}
 		e.proxy = i
 		l := 0
-		e.Capabilities = SeatCapability(runtime.Uint32(data[l : l+4]))
+		e.capabilities = SeatCapability(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnCapabilities != nil {
 			i.handlers.OnCapabilities(e)
@@ -5080,7 +5225,7 @@ func (i *Seat) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime
 		l := 0
 		nameLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.Name = runtime.String(data[l : l+nameLen])
+		e.name = runtime.String(data[l : l+nameLen])
 		l += nameLen
 		if i.handlers != nil && i.handlers.OnName != nil {
 			i.handlers.OnName(e)
@@ -5439,15 +5584,31 @@ func (e PointerAxisRelativeDirection) String() string {
 //	is undefined and a client should respond to this event by setting
 //	an appropriate pointer image with the set_cursor request.
 type PointerEnterEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the enter event
-	Serial uint32
-	// Surface surface entered by the pointer
-	Surface *WlSurface
-	// SurfaceX surface-local x coordinate
-	SurfaceX float64
-	// SurfaceY surface-local y coordinate
-	SurfaceY float64
+	serial   uint32
+	surface  *WlSurface
+	surfaceX float64
+	surfaceY float64
+	proxy    runtime.Proxy
+}
+
+// Serial serial number of the enter event
+func (e *PointerEnterEvent) Serial() uint32 {
+	return e.serial
+}
+
+// Surface surface entered by the pointer
+func (e *PointerEnterEvent) Surface() *WlSurface {
+	return e.surface
+}
+
+// SurfaceX surface-local x coordinate
+func (e *PointerEnterEvent) SurfaceX() float64 {
+	return e.surfaceX
+}
+
+// SurfaceY surface-local y coordinate
+func (e *PointerEnterEvent) SurfaceY() float64 {
+	return e.surfaceY
 }
 
 func (e *PointerEnterEvent) Proxy() runtime.Proxy {
@@ -5462,11 +5623,19 @@ func (e *PointerEnterEvent) Proxy() runtime.Proxy {
 //	The leave notification is sent before the enter notification
 //	for the new focus.
 type PointerLeaveEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the leave event
-	Serial uint32
-	// Surface surface left by the pointer
-	Surface *WlSurface
+	serial  uint32
+	surface *WlSurface
+	proxy   runtime.Proxy
+}
+
+// Serial serial number of the leave event
+func (e *PointerLeaveEvent) Serial() uint32 {
+	return e.serial
+}
+
+// Surface surface left by the pointer
+func (e *PointerLeaveEvent) Surface() *WlSurface {
+	return e.surface
 }
 
 func (e *PointerLeaveEvent) Proxy() runtime.Proxy {
@@ -5479,13 +5648,25 @@ func (e *PointerLeaveEvent) Proxy() runtime.Proxy {
 //	surface_x and surface_y are the location relative to the
 //	focused surface.
 type PointerMotionEvent struct {
-	proxy runtime.Proxy
-	// Time timestamp with millisecond granularity
-	Time uint32
-	// SurfaceX surface-local x coordinate
-	SurfaceX float64
-	// SurfaceY surface-local y coordinate
-	SurfaceY float64
+	time     uint32
+	surfaceX float64
+	surfaceY float64
+	proxy    runtime.Proxy
+}
+
+// Time timestamp with millisecond granularity
+func (e *PointerMotionEvent) Time() uint32 {
+	return e.time
+}
+
+// SurfaceX surface-local x coordinate
+func (e *PointerMotionEvent) SurfaceX() float64 {
+	return e.surfaceX
+}
+
+// SurfaceY surface-local y coordinate
+func (e *PointerMotionEvent) SurfaceY() float64 {
+	return e.surfaceY
 }
 
 func (e *PointerMotionEvent) Proxy() runtime.Proxy {
@@ -5509,15 +5690,31 @@ func (e *PointerMotionEvent) Proxy() runtime.Proxy {
 //	currently undefined but may be used in future versions of this
 //	protocol.
 type PointerButtonEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the button event
-	Serial uint32
-	// Time timestamp with millisecond granularity
-	Time uint32
-	// Button button that produced the event
-	Button uint32
-	// State physical state of the button
-	State PointerButtonState
+	serial uint32
+	time   uint32
+	button uint32
+	state  PointerButtonState
+	proxy  runtime.Proxy
+}
+
+// Serial serial number of the button event
+func (e *PointerButtonEvent) Serial() uint32 {
+	return e.serial
+}
+
+// Time timestamp with millisecond granularity
+func (e *PointerButtonEvent) Time() uint32 {
+	return e.time
+}
+
+// Button button that produced the event
+func (e *PointerButtonEvent) Button() uint32 {
+	return e.button
+}
+
+// State physical state of the button
+func (e *PointerButtonEvent) State() PointerButtonState {
+	return e.state
 }
 
 func (e *PointerButtonEvent) Proxy() runtime.Proxy {
@@ -5543,13 +5740,25 @@ func (e *PointerButtonEvent) Proxy() runtime.Proxy {
 //	When applicable, a client can transform its content relative to the
 //	scroll distance.
 type PointerAxisEvent struct {
+	time  uint32
+	axis  PointerAxis
+	value float64
 	proxy runtime.Proxy
-	// Time timestamp with millisecond granularity
-	Time uint32
-	// Axis axis type
-	Axis PointerAxis
-	// Value length of vector in surface-local coordinate space
-	Value float64
+}
+
+// Time timestamp with millisecond granularity
+func (e *PointerAxisEvent) Time() uint32 {
+	return e.time
+}
+
+// Axis axis type
+func (e *PointerAxisEvent) Axis() PointerAxis {
+	return e.axis
+}
+
+// Value length of vector in surface-local coordinate space
+func (e *PointerAxisEvent) Value() float64 {
+	return e.value
 }
 
 func (e *PointerAxisEvent) Proxy() runtime.Proxy {
@@ -5628,9 +5837,13 @@ func (e *PointerFrameEvent) Proxy() runtime.Proxy {
 //	The order of wl_pointer.axis_discrete and wl_pointer.axis_source is
 //	not guaranteed.
 type PointerAxisSourceEvent struct {
-	proxy runtime.Proxy
-	// AxisSource source of the axis event
-	AxisSource PointerAxisSource
+	axisSource PointerAxisSource
+	proxy      runtime.Proxy
+}
+
+// AxisSource source of the axis event
+func (e *PointerAxisSourceEvent) AxisSource() PointerAxisSource {
+	return e.axisSource
 }
 
 func (e *PointerAxisSourceEvent) Proxy() runtime.Proxy {
@@ -5654,11 +5867,19 @@ func (e *PointerAxisSourceEvent) Proxy() runtime.Proxy {
 //	wl_pointer.axis event. The timestamp value may be the same as a
 //	preceding wl_pointer.axis event.
 type PointerAxisStopEvent struct {
+	time  uint32
+	axis  PointerAxis
 	proxy runtime.Proxy
-	// Time timestamp with millisecond granularity
-	Time uint32
-	// Axis the axis stopped with this event
-	Axis PointerAxis
+}
+
+// Time timestamp with millisecond granularity
+func (e *PointerAxisStopEvent) Time() uint32 {
+	return e.time
+}
+
+// Axis the axis stopped with this event
+func (e *PointerAxisStopEvent) Axis() PointerAxis {
+	return e.axis
 }
 
 func (e *PointerAxisStopEvent) Proxy() runtime.Proxy {
@@ -5698,11 +5919,19 @@ func (e *PointerAxisStopEvent) Proxy() runtime.Proxy {
 //	The order of wl_pointer.axis_discrete and wl_pointer.axis_source is
 //	not guaranteed.
 type PointerAxisDiscreteEvent struct {
-	proxy runtime.Proxy
-	// Axis axis type
-	Axis PointerAxis
-	// Discrete number of steps
-	Discrete int32
+	axis     PointerAxis
+	discrete int32
+	proxy    runtime.Proxy
+}
+
+// Axis axis type
+func (e *PointerAxisDiscreteEvent) Axis() PointerAxis {
+	return e.axis
+}
+
+// Discrete number of steps
+func (e *PointerAxisDiscreteEvent) Discrete() int32 {
+	return e.discrete
 }
 
 func (e *PointerAxisDiscreteEvent) Proxy() runtime.Proxy {
@@ -5733,11 +5962,19 @@ func (e *PointerAxisDiscreteEvent) Proxy() runtime.Proxy {
 //	The order of wl_pointer.axis_value120 and wl_pointer.axis_source is
 //	not guaranteed.
 type PointerAxisValue120Event struct {
-	proxy runtime.Proxy
-	// Axis axis type
-	Axis PointerAxis
-	// Value120 scroll distance as fraction of 120
-	Value120 int32
+	axis     PointerAxis
+	value120 int32
+	proxy    runtime.Proxy
+}
+
+// Axis axis type
+func (e *PointerAxisValue120Event) Axis() PointerAxis {
+	return e.axis
+}
+
+// Value120 scroll distance as fraction of 120
+func (e *PointerAxisValue120Event) Value120() int32 {
+	return e.value120
 }
 
 func (e *PointerAxisValue120Event) Proxy() runtime.Proxy {
@@ -5782,11 +6019,19 @@ func (e *PointerAxisValue120Event) Proxy() runtime.Proxy {
 //	wl_pointer.axis_discrete and wl_pointer.axis_source is not
 //	guaranteed.
 type PointerAxisRelativeDirectionEvent struct {
-	proxy runtime.Proxy
-	// Axis axis type
-	Axis PointerAxis
-	// Direction physical direction relative to axis motion
-	Direction PointerAxisRelativeDirection
+	axis      PointerAxis
+	direction PointerAxisRelativeDirection
+	proxy     runtime.Proxy
+}
+
+// Axis axis type
+func (e *PointerAxisRelativeDirectionEvent) Axis() PointerAxis {
+	return e.axis
+}
+
+// Direction physical direction relative to axis motion
+func (e *PointerAxisRelativeDirectionEvent) Direction() PointerAxisRelativeDirection {
+	return e.direction
 }
 
 func (e *PointerAxisRelativeDirectionEvent) Proxy() runtime.Proxy {
@@ -5804,13 +6049,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerEnterEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
+		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
-		e.SurfaceX = runtime.Fixed(data[l : l+4])
+		e.surfaceX = runtime.Fixed(data[l : l+4])
 		l += 4
-		e.SurfaceY = runtime.Fixed(data[l : l+4])
+		e.surfaceY = runtime.Fixed(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnEnter != nil {
 			i.handlers.OnEnter(e)
@@ -5824,9 +6069,9 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerLeaveEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
+		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
 		if i.handlers != nil && i.handlers.OnLeave != nil {
 			i.handlers.OnLeave(e)
@@ -5840,11 +6085,11 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerMotionEvent{}
 		e.proxy = i
 		l := 0
-		e.Time = runtime.Uint32(data[l : l+4])
+		e.time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.SurfaceX = runtime.Fixed(data[l : l+4])
+		e.surfaceX = runtime.Fixed(data[l : l+4])
 		l += 4
-		e.SurfaceY = runtime.Fixed(data[l : l+4])
+		e.surfaceY = runtime.Fixed(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnMotion != nil {
 			i.handlers.OnMotion(e)
@@ -5858,13 +6103,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerButtonEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Time = runtime.Uint32(data[l : l+4])
+		e.time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Button = runtime.Uint32(data[l : l+4])
+		e.button = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.State = PointerButtonState(runtime.Uint32(data[l : l+4]))
+		e.state = PointerButtonState(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnButton != nil {
 			i.handlers.OnButton(e)
@@ -5878,11 +6123,11 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerAxisEvent{}
 		e.proxy = i
 		l := 0
-		e.Time = runtime.Uint32(data[l : l+4])
+		e.time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
+		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Value = runtime.Fixed(data[l : l+4])
+		e.value = runtime.Fixed(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnAxis != nil {
 			i.handlers.OnAxis(e)
@@ -5907,7 +6152,7 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerAxisSourceEvent{}
 		e.proxy = i
 		l := 0
-		e.AxisSource = PointerAxisSource(runtime.Uint32(data[l : l+4]))
+		e.axisSource = PointerAxisSource(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnAxisSource != nil {
 			i.handlers.OnAxisSource(e)
@@ -5921,9 +6166,9 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerAxisStopEvent{}
 		e.proxy = i
 		l := 0
-		e.Time = runtime.Uint32(data[l : l+4])
+		e.time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
+		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnAxisStop != nil {
 			i.handlers.OnAxisStop(e)
@@ -5937,9 +6182,9 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerAxisDiscreteEvent{}
 		e.proxy = i
 		l := 0
-		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
+		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Discrete = int32(runtime.Uint32(data[l : l+4]))
+		e.discrete = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnAxisDiscrete != nil {
 			i.handlers.OnAxisDiscrete(e)
@@ -5953,9 +6198,9 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerAxisValue120Event{}
 		e.proxy = i
 		l := 0
-		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
+		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Value120 = int32(runtime.Uint32(data[l : l+4]))
+		e.value120 = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnAxisValue120 != nil {
 			i.handlers.OnAxisValue120(e)
@@ -5969,9 +6214,9 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 		e := &PointerAxisRelativeDirectionEvent{}
 		e.proxy = i
 		l := 0
-		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
+		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Direction = PointerAxisRelativeDirection(runtime.Uint32(data[l : l+4]))
+		e.direction = PointerAxisRelativeDirection(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnAxisRelativeDirection != nil {
 			i.handlers.OnAxisRelativeDirection(e)
@@ -6144,13 +6389,25 @@ func (e KeyboardKeyState) String() string {
 //	From version 7 onwards, the fd must be mapped with MAP_PRIVATE by
 //	the recipient, as MAP_SHARED may fail.
 type KeyboardKeymapEvent struct {
-	proxy runtime.Proxy
-	// Format keymap format
-	Format KeyboardKeymapFormat
-	// Fd keymap file descriptor
-	Fd int
-	// Size keymap size, in bytes
-	Size uint32
+	format KeyboardKeymapFormat
+	fd     int
+	size   uint32
+	proxy  runtime.Proxy
+}
+
+// Format keymap format
+func (e *KeyboardKeymapEvent) Format() KeyboardKeymapFormat {
+	return e.format
+}
+
+// Fd keymap file descriptor
+func (e *KeyboardKeymapEvent) Fd() int {
+	return e.fd
+}
+
+// Size keymap size, in bytes
+func (e *KeyboardKeymapEvent) Size() uint32 {
+	return e.size
 }
 
 func (e *KeyboardKeymapEvent) Proxy() runtime.Proxy {
@@ -6173,13 +6430,25 @@ func (e *KeyboardKeymapEvent) Proxy() runtime.Proxy {
 //	Clients should not use the list of pressed keys to emulate key-press
 //	events. The order of keys in the list is unspecified.
 type KeyboardEnterEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the enter event
-	Serial uint32
-	// Surface surface gaining keyboard focus
-	Surface *WlSurface
-	// Keys the keys currently logically down
-	Keys []byte
+	serial  uint32
+	surface *WlSurface
+	keys    []byte
+	proxy   runtime.Proxy
+}
+
+// Serial serial number of the enter event
+func (e *KeyboardEnterEvent) Serial() uint32 {
+	return e.serial
+}
+
+// Surface surface gaining keyboard focus
+func (e *KeyboardEnterEvent) Surface() *WlSurface {
+	return e.surface
+}
+
+// Keys the keys currently logically down
+func (e *KeyboardEnterEvent) Keys() []byte {
+	return e.keys
 }
 
 func (e *KeyboardEnterEvent) Proxy() runtime.Proxy {
@@ -6199,11 +6468,19 @@ func (e *KeyboardEnterEvent) Proxy() runtime.Proxy {
 //	of the wl_keyboard was not equal to the surface argument immediately
 //	before this event.
 type KeyboardLeaveEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the leave event
-	Serial uint32
-	// Surface surface that lost keyboard focus
-	Surface *WlSurface
+	serial  uint32
+	surface *WlSurface
+	proxy   runtime.Proxy
+}
+
+// Serial serial number of the leave event
+func (e *KeyboardLeaveEvent) Serial() uint32 {
+	return e.serial
+}
+
+// Surface surface that lost keyboard focus
+func (e *KeyboardLeaveEvent) Surface() *WlSurface {
+	return e.surface
 }
 
 func (e *KeyboardLeaveEvent) Proxy() runtime.Proxy {
@@ -6236,15 +6513,31 @@ func (e *KeyboardLeaveEvent) Proxy() runtime.Proxy {
 //	0 has been received. This allows the compositor to take over the
 //	responsibility of key repetition.
 type KeyboardKeyEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the key event
-	Serial uint32
-	// Time timestamp with millisecond granularity
-	Time uint32
-	// Key key that produced the event
-	Key uint32
-	// State physical state of the key
-	State KeyboardKeyState
+	serial uint32
+	time   uint32
+	key    uint32
+	state  KeyboardKeyState
+	proxy  runtime.Proxy
+}
+
+// Serial serial number of the key event
+func (e *KeyboardKeyEvent) Serial() uint32 {
+	return e.serial
+}
+
+// Time timestamp with millisecond granularity
+func (e *KeyboardKeyEvent) Time() uint32 {
+	return e.time
+}
+
+// Key key that produced the event
+func (e *KeyboardKeyEvent) Key() uint32 {
+	return e.key
+}
+
+// State physical state of the key
+func (e *KeyboardKeyEvent) State() KeyboardKeyState {
+	return e.state
 }
 
 func (e *KeyboardKeyEvent) Proxy() runtime.Proxy {
@@ -6267,17 +6560,37 @@ func (e *KeyboardKeyEvent) Proxy() runtime.Proxy {
 //	In the wl_keyboard logical state, this event updates the modifiers and
 //	group.
 type KeyboardModifiersEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the modifiers event
-	Serial uint32
-	// ModsDepressed depressed modifiers
-	ModsDepressed uint32
-	// ModsLatched latched modifiers
-	ModsLatched uint32
-	// ModsLocked locked modifiers
-	ModsLocked uint32
-	// Group keyboard layout
-	Group uint32
+	serial        uint32
+	modsDepressed uint32
+	modsLatched   uint32
+	modsLocked    uint32
+	group         uint32
+	proxy         runtime.Proxy
+}
+
+// Serial serial number of the modifiers event
+func (e *KeyboardModifiersEvent) Serial() uint32 {
+	return e.serial
+}
+
+// ModsDepressed depressed modifiers
+func (e *KeyboardModifiersEvent) ModsDepressed() uint32 {
+	return e.modsDepressed
+}
+
+// ModsLatched latched modifiers
+func (e *KeyboardModifiersEvent) ModsLatched() uint32 {
+	return e.modsLatched
+}
+
+// ModsLocked locked modifiers
+func (e *KeyboardModifiersEvent) ModsLocked() uint32 {
+	return e.modsLocked
+}
+
+// Group keyboard layout
+func (e *KeyboardModifiersEvent) Group() uint32 {
+	return e.group
 }
 
 func (e *KeyboardModifiersEvent) Proxy() runtime.Proxy {
@@ -6299,11 +6612,19 @@ func (e *KeyboardModifiersEvent) Proxy() runtime.Proxy {
 //	so clients should continue listening for the event past the creation
 //	of wl_keyboard.
 type KeyboardRepeatInfoEvent struct {
+	rate  int32
+	delay int32
 	proxy runtime.Proxy
-	// Rate the rate of repeating keys in characters per second
-	Rate int32
-	// Delay delay in milliseconds since key down until repeating starts
-	Delay int32
+}
+
+// Rate the rate of repeating keys in characters per second
+func (e *KeyboardRepeatInfoEvent) Rate() int32 {
+	return e.rate
+}
+
+// Delay delay in milliseconds since key down until repeating starts
+func (e *KeyboardRepeatInfoEvent) Delay() int32 {
+	return e.delay
 }
 
 func (e *KeyboardRepeatInfoEvent) Proxy() runtime.Proxy {
@@ -6324,10 +6645,10 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &KeyboardKeymapEvent{}
 		e.proxy = i
 		l := 0
-		e.Format = KeyboardKeymapFormat(runtime.Uint32(data[l : l+4]))
+		e.format = KeyboardKeymapFormat(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Fd = fd
-		e.Size = runtime.Uint32(data[l : l+4])
+		e.fd = fd
+		e.size = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnKeymap != nil {
 			i.handlers.OnKeymap(e)
@@ -6341,14 +6662,14 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &KeyboardEnterEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
+		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
 		keysLen := int(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Keys = make([]byte, keysLen)
-		copy(e.Keys, data[l:l+keysLen])
+		e.keys = make([]byte, keysLen)
+		copy(e.keys, data[l:l+keysLen])
 		l += keysLen
 		if i.handlers != nil && i.handlers.OnEnter != nil {
 			i.handlers.OnEnter(e)
@@ -6362,9 +6683,9 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &KeyboardLeaveEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
+		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
 		if i.handlers != nil && i.handlers.OnLeave != nil {
 			i.handlers.OnLeave(e)
@@ -6378,13 +6699,13 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &KeyboardKeyEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Time = runtime.Uint32(data[l : l+4])
+		e.time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Key = runtime.Uint32(data[l : l+4])
+		e.key = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.State = KeyboardKeyState(runtime.Uint32(data[l : l+4]))
+		e.state = KeyboardKeyState(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnKey != nil {
 			i.handlers.OnKey(e)
@@ -6398,15 +6719,15 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &KeyboardModifiersEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.ModsDepressed = runtime.Uint32(data[l : l+4])
+		e.modsDepressed = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.ModsLatched = runtime.Uint32(data[l : l+4])
+		e.modsLatched = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.ModsLocked = runtime.Uint32(data[l : l+4])
+		e.modsLocked = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Group = runtime.Uint32(data[l : l+4])
+		e.group = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnModifiers != nil {
 			i.handlers.OnModifiers(e)
@@ -6420,9 +6741,9 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &KeyboardRepeatInfoEvent{}
 		e.proxy = i
 		l := 0
-		e.Rate = int32(runtime.Uint32(data[l : l+4]))
+		e.rate = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Delay = int32(runtime.Uint32(data[l : l+4]))
+		e.delay = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnRepeatInfo != nil {
 			i.handlers.OnRepeatInfo(e)
@@ -6499,19 +6820,43 @@ func (i *Touch) Release() {
 //	this ID. The ID ceases to be valid after a touch up event and may be
 //	reused in the future.
 type TouchDownEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the touch down event
-	Serial uint32
-	// Time timestamp with millisecond granularity
-	Time uint32
-	// Surface surface touched
-	Surface *WlSurface
-	// Id the unique ID of this touch point
-	Id int32
-	// X surface-local x coordinate
-	X float64
-	// Y surface-local y coordinate
-	Y float64
+	serial  uint32
+	time    uint32
+	surface *WlSurface
+	id      int32
+	x       float64
+	y       float64
+	proxy   runtime.Proxy
+}
+
+// Serial serial number of the touch down event
+func (e *TouchDownEvent) Serial() uint32 {
+	return e.serial
+}
+
+// Time timestamp with millisecond granularity
+func (e *TouchDownEvent) Time() uint32 {
+	return e.time
+}
+
+// Surface surface touched
+func (e *TouchDownEvent) Surface() *WlSurface {
+	return e.surface
+}
+
+// Id the unique ID of this touch point
+func (e *TouchDownEvent) Id() int32 {
+	return e.id
+}
+
+// X surface-local x coordinate
+func (e *TouchDownEvent) X() float64 {
+	return e.x
+}
+
+// Y surface-local y coordinate
+func (e *TouchDownEvent) Y() float64 {
+	return e.y
 }
 
 func (e *TouchDownEvent) Proxy() runtime.Proxy {
@@ -6524,13 +6869,25 @@ func (e *TouchDownEvent) Proxy() runtime.Proxy {
 //	this touch point and the touch point's ID is released and may be
 //	reused in a future touch down event.
 type TouchUpEvent struct {
-	proxy runtime.Proxy
-	// Serial serial number of the touch up event
-	Serial uint32
-	// Time timestamp with millisecond granularity
-	Time uint32
-	// Id the unique ID of this touch point
-	Id int32
+	serial uint32
+	time   uint32
+	id     int32
+	proxy  runtime.Proxy
+}
+
+// Serial serial number of the touch up event
+func (e *TouchUpEvent) Serial() uint32 {
+	return e.serial
+}
+
+// Time timestamp with millisecond granularity
+func (e *TouchUpEvent) Time() uint32 {
+	return e.time
+}
+
+// Id the unique ID of this touch point
+func (e *TouchUpEvent) Id() int32 {
+	return e.id
 }
 
 func (e *TouchUpEvent) Proxy() runtime.Proxy {
@@ -6541,15 +6898,31 @@ func (e *TouchUpEvent) Proxy() runtime.Proxy {
 //
 //	A touch point has changed coordinates.
 type TouchMotionEvent struct {
+	time  uint32
+	id    int32
+	x     float64
+	y     float64
 	proxy runtime.Proxy
-	// Time timestamp with millisecond granularity
-	Time uint32
-	// Id the unique ID of this touch point
-	Id int32
-	// X surface-local x coordinate
-	X float64
-	// Y surface-local y coordinate
-	Y float64
+}
+
+// Time timestamp with millisecond granularity
+func (e *TouchMotionEvent) Time() uint32 {
+	return e.time
+}
+
+// Id the unique ID of this touch point
+func (e *TouchMotionEvent) Id() int32 {
+	return e.id
+}
+
+// X surface-local x coordinate
+func (e *TouchMotionEvent) X() float64 {
+	return e.x
+}
+
+// Y surface-local y coordinate
+func (e *TouchMotionEvent) Y() float64 {
+	return e.y
 }
 
 func (e *TouchMotionEvent) Proxy() runtime.Proxy {
@@ -6620,13 +6993,25 @@ func (e *TouchCancelEvent) Proxy() runtime.Proxy {
 //	shape reports. The client has to make reasonable assumptions about the
 //	shape if it did not receive this event.
 type TouchShapeEvent struct {
+	id    int32
+	major float64
+	minor float64
 	proxy runtime.Proxy
-	// Id the unique ID of this touch point
-	Id int32
-	// Major length of the major axis in surface-local coordinates
-	Major float64
-	// Minor length of the minor axis in surface-local coordinates
-	Minor float64
+}
+
+// Id the unique ID of this touch point
+func (e *TouchShapeEvent) Id() int32 {
+	return e.id
+}
+
+// Major length of the major axis in surface-local coordinates
+func (e *TouchShapeEvent) Major() float64 {
+	return e.major
+}
+
+// Minor length of the minor axis in surface-local coordinates
+func (e *TouchShapeEvent) Minor() float64 {
+	return e.minor
 }
 
 func (e *TouchShapeEvent) Proxy() runtime.Proxy {
@@ -6659,11 +7044,19 @@ func (e *TouchShapeEvent) Proxy() runtime.Proxy {
 //	This event is only sent by the compositor if the touch device supports
 //	orientation reports.
 type TouchOrientationEvent struct {
-	proxy runtime.Proxy
-	// Id the unique ID of this touch point
-	Id int32
-	// Orientation angle between major axis and positive surface y-axis in degrees
-	Orientation float64
+	id          int32
+	orientation float64
+	proxy       runtime.Proxy
+}
+
+// Id the unique ID of this touch point
+func (e *TouchOrientationEvent) Id() int32 {
+	return e.id
+}
+
+// Orientation angle between major axis and positive surface y-axis in degrees
+func (e *TouchOrientationEvent) Orientation() float64 {
+	return e.orientation
 }
 
 func (e *TouchOrientationEvent) Proxy() runtime.Proxy {
@@ -6681,17 +7074,17 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 		e := &TouchDownEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Time = runtime.Uint32(data[l : l+4])
+		e.time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
+		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
-		e.Id = int32(runtime.Uint32(data[l : l+4]))
+		e.id = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.X = runtime.Fixed(data[l : l+4])
+		e.x = runtime.Fixed(data[l : l+4])
 		l += 4
-		e.Y = runtime.Fixed(data[l : l+4])
+		e.y = runtime.Fixed(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnDown != nil {
 			i.handlers.OnDown(e)
@@ -6705,11 +7098,11 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 		e := &TouchUpEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Time = runtime.Uint32(data[l : l+4])
+		e.time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Id = int32(runtime.Uint32(data[l : l+4]))
+		e.id = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnUp != nil {
 			i.handlers.OnUp(e)
@@ -6723,13 +7116,13 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 		e := &TouchMotionEvent{}
 		e.proxy = i
 		l := 0
-		e.Time = runtime.Uint32(data[l : l+4])
+		e.time = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Id = int32(runtime.Uint32(data[l : l+4]))
+		e.id = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.X = runtime.Fixed(data[l : l+4])
+		e.x = runtime.Fixed(data[l : l+4])
 		l += 4
-		e.Y = runtime.Fixed(data[l : l+4])
+		e.y = runtime.Fixed(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnMotion != nil {
 			i.handlers.OnMotion(e)
@@ -6765,11 +7158,11 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 		e := &TouchShapeEvent{}
 		e.proxy = i
 		l := 0
-		e.Id = int32(runtime.Uint32(data[l : l+4]))
+		e.id = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Major = runtime.Fixed(data[l : l+4])
+		e.major = runtime.Fixed(data[l : l+4])
 		l += 4
-		e.Minor = runtime.Fixed(data[l : l+4])
+		e.minor = runtime.Fixed(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnShape != nil {
 			i.handlers.OnShape(e)
@@ -6783,9 +7176,9 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 		e := &TouchOrientationEvent{}
 		e.proxy = i
 		l := 0
-		e.Id = int32(runtime.Uint32(data[l : l+4]))
+		e.id = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Orientation = runtime.Fixed(data[l : l+4])
+		e.orientation = runtime.Fixed(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnOrientation != nil {
 			i.handlers.OnOrientation(e)
@@ -7055,23 +7448,55 @@ func (e OutputMode) String() string {
 //	should use xdg_output.logical_position. Instead of using make and model,
 //	clients should use name and description.
 type OutputGeometryEvent struct {
-	proxy runtime.Proxy
-	// X x position within the global compositor space
-	X int32
-	// Y y position within the global compositor space
-	Y int32
-	// PhysicalWidth width in millimeters of the output
-	PhysicalWidth int32
-	// PhysicalHeight height in millimeters of the output
-	PhysicalHeight int32
-	// Subpixel subpixel orientation of the output
-	Subpixel int32
-	// Make textual description of the manufacturer
-	Make string
-	// Model textual description of the model
-	Model string
-	// Transform additional transformation applied to buffer contents during presentation
-	Transform int32
+	x              int32
+	y              int32
+	physicalWidth  int32
+	physicalHeight int32
+	subpixel       int32
+	make           string
+	model          string
+	transform      int32
+	proxy          runtime.Proxy
+}
+
+// X x position within the global compositor space
+func (e *OutputGeometryEvent) X() int32 {
+	return e.x
+}
+
+// Y y position within the global compositor space
+func (e *OutputGeometryEvent) Y() int32 {
+	return e.y
+}
+
+// PhysicalWidth width in millimeters of the output
+func (e *OutputGeometryEvent) PhysicalWidth() int32 {
+	return e.physicalWidth
+}
+
+// PhysicalHeight height in millimeters of the output
+func (e *OutputGeometryEvent) PhysicalHeight() int32 {
+	return e.physicalHeight
+}
+
+// Subpixel subpixel orientation of the output
+func (e *OutputGeometryEvent) Subpixel() int32 {
+	return e.subpixel
+}
+
+// Make textual description of the manufacturer
+func (e *OutputGeometryEvent) Make() string {
+	return e.make
+}
+
+// Model textual description of the model
+func (e *OutputGeometryEvent) Model() string {
+	return e.model
+}
+
+// Transform additional transformation applied to buffer contents during presentation
+func (e *OutputGeometryEvent) Transform() int32 {
+	return e.transform
 }
 
 func (e *OutputGeometryEvent) Proxy() runtime.Proxy {
@@ -7114,15 +7539,31 @@ func (e *OutputGeometryEvent) Proxy() runtime.Proxy {
 //	compositors, such as those exposing virtual outputs, might fake the
 //	refresh rate or the size.
 type OutputModeEvent struct {
-	proxy runtime.Proxy
-	// Flags bitfield of mode flags
-	Flags OutputMode
-	// Width width of the mode in hardware units
-	Width int32
-	// Height height of the mode in hardware units
-	Height int32
-	// Refresh vertical refresh rate in mHz
-	Refresh int32
+	flags   OutputMode
+	width   int32
+	height  int32
+	refresh int32
+	proxy   runtime.Proxy
+}
+
+// Flags bitfield of mode flags
+func (e *OutputModeEvent) Flags() OutputMode {
+	return e.flags
+}
+
+// Width width of the mode in hardware units
+func (e *OutputModeEvent) Width() int32 {
+	return e.width
+}
+
+// Height height of the mode in hardware units
+func (e *OutputModeEvent) Height() int32 {
+	return e.height
+}
+
+// Refresh vertical refresh rate in mHz
+func (e *OutputModeEvent) Refresh() int32 {
+	return e.refresh
 }
 
 func (e *OutputModeEvent) Proxy() runtime.Proxy {
@@ -7165,9 +7606,13 @@ func (e *OutputDoneEvent) Proxy() runtime.Proxy {
 //
 //	The scale event will be followed by a done event.
 type OutputScaleEvent struct {
-	proxy runtime.Proxy
-	// Factor scaling factor of output
-	Factor int32
+	factor int32
+	proxy  runtime.Proxy
+}
+
+// Factor scaling factor of output
+func (e *OutputScaleEvent) Factor() int32 {
+	return e.factor
 }
 
 func (e *OutputScaleEvent) Proxy() runtime.Proxy {
@@ -7205,9 +7650,13 @@ func (e *OutputScaleEvent) Proxy() runtime.Proxy {
 //
 //	The name event will be followed by a done event.
 type OutputNameEvent struct {
+	name  string
 	proxy runtime.Proxy
-	// Name output name
-	Name string
+}
+
+// Name output name
+func (e *OutputNameEvent) Name() string {
+	return e.name
 }
 
 func (e *OutputNameEvent) Proxy() runtime.Proxy {
@@ -7231,9 +7680,13 @@ func (e *OutputNameEvent) Proxy() runtime.Proxy {
 //
 //	The description event will be followed by a done event.
 type OutputDescriptionEvent struct {
-	proxy runtime.Proxy
-	// Description output description
-	Description string
+	description string
+	proxy       runtime.Proxy
+}
+
+// Description output description
+func (e *OutputDescriptionEvent) Description() string {
+	return e.description
 }
 
 func (e *OutputDescriptionEvent) Proxy() runtime.Proxy {
@@ -7251,25 +7704,25 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runti
 		e := &OutputGeometryEvent{}
 		e.proxy = i
 		l := 0
-		e.X = int32(runtime.Uint32(data[l : l+4]))
+		e.x = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Y = int32(runtime.Uint32(data[l : l+4]))
+		e.y = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.PhysicalWidth = int32(runtime.Uint32(data[l : l+4]))
+		e.physicalWidth = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.PhysicalHeight = int32(runtime.Uint32(data[l : l+4]))
+		e.physicalHeight = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Subpixel = int32(runtime.Uint32(data[l : l+4]))
+		e.subpixel = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		makeLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.Make = runtime.String(data[l : l+makeLen])
+		e.make = runtime.String(data[l : l+makeLen])
 		l += makeLen
 		modelLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.Model = runtime.String(data[l : l+modelLen])
+		e.model = runtime.String(data[l : l+modelLen])
 		l += modelLen
-		e.Transform = int32(runtime.Uint32(data[l : l+4]))
+		e.transform = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnGeometry != nil {
 			i.handlers.OnGeometry(e)
@@ -7283,13 +7736,13 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runti
 		e := &OutputModeEvent{}
 		e.proxy = i
 		l := 0
-		e.Flags = OutputMode(runtime.Uint32(data[l : l+4]))
+		e.flags = OutputMode(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Width = int32(runtime.Uint32(data[l : l+4]))
+		e.width = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Height = int32(runtime.Uint32(data[l : l+4]))
+		e.height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Refresh = int32(runtime.Uint32(data[l : l+4]))
+		e.refresh = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnMode != nil {
 			i.handlers.OnMode(e)
@@ -7314,7 +7767,7 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runti
 		e := &OutputScaleEvent{}
 		e.proxy = i
 		l := 0
-		e.Factor = int32(runtime.Uint32(data[l : l+4]))
+		e.factor = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnScale != nil {
 			i.handlers.OnScale(e)
@@ -7330,7 +7783,7 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runti
 		l := 0
 		nameLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.Name = runtime.String(data[l : l+nameLen])
+		e.name = runtime.String(data[l : l+nameLen])
 		l += nameLen
 		if i.handlers != nil && i.handlers.OnName != nil {
 			i.handlers.OnName(e)
@@ -7346,7 +7799,7 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runti
 		l := 0
 		descriptionLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
 		l += 4
-		e.Description = runtime.String(data[l : l+descriptionLen])
+		e.description = runtime.String(data[l : l+descriptionLen])
 		l += descriptionLen
 		if i.handlers != nil && i.handlers.OnDescription != nil {
 			i.handlers.OnDescription(e)

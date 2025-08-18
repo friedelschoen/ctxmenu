@@ -3,7 +3,6 @@ set -xe
 CMDPATH=../wayland/cmd/go-wl-scanner
 GENARGS="--strip-prefix=wl_,xdg_ --strip-except=xdg_surface,wl_surface"
 
-
 go build -C ${CMDPATH}
 
 ${CMDPATH}/go-wl-scanner -p proto -o proto/wayland.go $GENARGS proto/wayland.xml

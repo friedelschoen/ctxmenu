@@ -204,7 +204,7 @@ func (menu *Menu[T]) updateWindow() error {
 			OnConfigure: func(ev wayland.Event) {
 				e := ev.(*proto.LayerSurfaceConfigureEvent)
 				// Ack first (required)
-				menu.layersurface.AckConfigure(e.Serial)
+				menu.layersurface.AckConfigure(e.Serial())
 
 				// If compositor provides width/height > 0, you can resize your buffer here.
 				// For now we just attach whatever frame we have.

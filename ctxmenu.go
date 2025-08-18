@@ -288,10 +288,10 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 				hasleft.Stop()
 				hasleft = nil
 			}
-			curmenu = rootmenu.getmenu(ev.Surface.ID())
+			curmenu = rootmenu.getmenu(ev.Surface().ID())
 			action = ActionDraw
 		case *proto.PointerMotionEvent:
-			curY = int(ev.SurfaceY)
+			curY = int(ev.SurfaceY())
 			if warped {
 				warped = false
 				break
@@ -303,7 +303,7 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 			if menu == nil {
 				continue
 			}
-			itemidx := menu.getitem(int(ev.SurfaceY))
+			itemidx := menu.getitem(curY)
 			if itemidx == -1 {
 				continue
 			}
@@ -331,23 +331,23 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 			}
 			action = ActionClear | ActionMap | ActionDraw
 		case *proto.PointerAxisEvent:
-			if ev.Axis != proto.PointerAxisHorizontalScroll {
+			if ev.Axis() != proto.PointerAxisHorizontalScroll {
 				break
 			}
 			if curmenu.overflow == -1 {
 				break
 			}
-			if ev.Value < 0 {
+			if ev.Value() < 0 {
 				curmenu.first = max(curmenu.first-1, 0)
 				action = ActionClear | ActionMap | ActionDraw
 				break
-			} else if ev.Value > 0 {
+			} else if ev.Value() > 0 {
 				curmenu.first = min(curmenu.first+1, len(curmenu.items)-curmenu.overflow)
 				action = ActionClear | ActionMap | ActionDraw
 				break
 			}
 		case *proto.PointerButtonEvent:
-			if ev.State != proto.PointerButtonStatePressed {
+			if ev.State() != proto.PointerButtonStatePressed {
 				break
 			}
 			menu := curmenu
@@ -379,19 +379,19 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 			}
 			curmenu.selected = 0
 			action = ActionClear | ActionMap | ActionDraw
-			if ev.Button == uint32(wayland.ButtonMiddle) {
+			if ev.Button() == uint32(wayland.ButtonMiddle) {
 				action |= ActionWarp
 			}
 		case *proto.KeyboardKeymapEvent:
-			if ev.Format != proto.KeyboardKeymapFormatXkbV1 {
-				log.Printf("unsupported keymap: %v\n", ev.Format)
+			if ev.Format() != proto.KeyboardKeymapFormatXkbV1 {
+				log.Printf("unsupported keymap: %v\n", ev.Format())
 				break
 			}
 			if kb != nil {
 				kb.Close()
 				kb = nil
 			}
-			format, err := syscall.Mmap(ev.Fd, 0, int(ev.Size), syscall.PROT_READ, syscall.MAP_PRIVATE)
+			format, err := syscall.Mmap(ev.Fd(), 0, int(ev.Size()), syscall.PROT_READ, syscall.MAP_PRIVATE)
 			if err != nil {
 				log.Fatalf("unable to create mapping: %v", err)
 				break
@@ -410,7 +410,7 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 			if kb == nil {
 				break
 			}
-			key, err := kb.Translate(ev.Key+8, ev.State == proto.KeyboardKeyStatePressed)
+			key, err := kb.Translate(ev.Key()+8, ev.State() == proto.KeyboardKeyStatePressed)
 			if err != nil {
 				log.Printf("unable to translate key: %v\n", err)
 				break
@@ -569,7 +569,7 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 	ctxmenu.display = proto.NewDisplay(&proto.DisplayHandlers{
 		OnError: func(evt wayland.Event) {
 			e := evt.(*proto.DisplayErrorEvent)
-			log.Fatalf("display error event on %s: [%d] %s\n", e.ObjectId.Name(), e.Code, e.Message)
+			log.Fatalf("display error event on %s: [%d] %s\n", e.ObjectId().Name(), e.Code(), e.Message())
 		},
 	})
 	/* manually registing display */
@@ -581,7 +581,7 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 		OnCapabilities: func(evt wayland.Event) {
 			e := evt.(*proto.SeatCapabilitiesEvent)
 
-			hasPointer := e.Capabilities&proto.SeatCapabilityPointer != 0
+			hasPointer := e.Capabilities()&proto.SeatCapabilityPointer != 0
 			if hasPointer && ctxmenu.pointer == nil {
 				ctxmenu.getPointer()
 			} else if !hasPointer && ctxmenu.pointer != nil {
@@ -589,7 +589,7 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 				ctxmenu.pointer = nil
 			}
 
-			hasKeyboard := e.Capabilities&proto.SeatCapabilityKeyboard != 0
+			hasKeyboard := e.Capabilities()&proto.SeatCapabilityKeyboard != 0
 			if hasKeyboard && ctxmenu.keyboard == nil {
 				ctxmenu.getKeyboard()
 			} else if !hasKeyboard && ctxmenu.keyboard != nil {
@@ -602,11 +602,11 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 	ctxmenu.output = proto.NewOutput(&proto.OutputHandlers{
 		OnGeometry: func(evt wayland.Event) {
 			e := evt.(*proto.OutputGeometryEvent)
-			ctxmenu.monOffset = image.Point{int(e.X), int(e.Y)}
+			ctxmenu.monOffset = image.Point{int(e.X()), int(e.Y())}
 		},
 		OnMode: func(evt wayland.Event) {
 			e := evt.(*proto.OutputModeEvent)
-			ctxmenu.monSize = image.Point{int(e.Width), int(e.Height)}
+			ctxmenu.monSize = image.Point{int(e.Width()), int(e.Height())}
 		},
 	})
 	reg := wayland.Registrar{ctxmenu.compositor, ctxmenu.shm, ctxmenu.seat, ctxmenu.layerShell, ctxmenu.output}

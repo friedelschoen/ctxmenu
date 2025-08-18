@@ -757,10 +757,22 @@ func (e LayerSurfaceAnchor) String() string {
 //	If the width or height arguments are zero, it means the client should
 //	decide its own window dimension.
 type LayerSurfaceConfigureEvent struct {
-	proxy runtime.Proxy
-	Serial uint32
-	Width uint32
-	Height uint32
+	serial uint32
+	width  uint32
+	height uint32
+	proxy  runtime.Proxy
+}
+
+func (e *LayerSurfaceConfigureEvent) Serial() uint32 {
+	return e.serial
+}
+
+func (e *LayerSurfaceConfigureEvent) Width() uint32 {
+	return e.width
+}
+
+func (e *LayerSurfaceConfigureEvent) Height() uint32 {
+	return e.height
 }
 
 func (e *LayerSurfaceConfigureEvent) Proxy() runtime.Proxy {
@@ -793,11 +805,11 @@ func (i *LayerSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<-
 		e := &LayerSurfaceConfigureEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Width = runtime.Uint32(data[l : l+4])
+		e.width = runtime.Uint32(data[l : l+4])
 		l += 4
-		e.Height = runtime.Uint32(data[l : l+4])
+		e.height = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)

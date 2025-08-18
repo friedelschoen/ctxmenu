@@ -254,9 +254,13 @@ func (e WmBaseError) String() string {
 //	A compositor is free to ping in any way it wants, but a client must
 //	always respond to any xdg_wm_base object it created.
 type WmBasePingEvent struct {
-	proxy runtime.Proxy
-	// Serial pass this to the pong request
-	Serial uint32
+	serial uint32
+	proxy  runtime.Proxy
+}
+
+// Serial pass this to the pong request
+func (e *WmBasePingEvent) Serial() uint32 {
+	return e.serial
 }
 
 func (e *WmBasePingEvent) Proxy() runtime.Proxy {
@@ -274,7 +278,7 @@ func (i *WmBase) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runti
 		e := &WmBasePingEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnPing != nil {
 			i.handlers.OnPing(e)
@@ -1270,9 +1274,13 @@ func (e XdgSurfaceError) String() string {
 //	If the client receives multiple configure events before it can respond
 //	to one, it is free to discard all but the last event it received.
 type XdgSurfaceConfigureEvent struct {
-	proxy runtime.Proxy
-	// Serial serial of the configure event
-	Serial uint32
+	serial uint32
+	proxy  runtime.Proxy
+}
+
+// Serial serial of the configure event
+func (e *XdgSurfaceConfigureEvent) Serial() uint32 {
+	return e.serial
 }
 
 func (e *XdgSurfaceConfigureEvent) Proxy() runtime.Proxy {
@@ -1290,7 +1298,7 @@ func (i *XdgSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 		e := &XdgSurfaceConfigureEvent{}
 		e.proxy = i
 		l := 0
-		e.Serial = runtime.Uint32(data[l : l+4])
+		e.serial = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)
@@ -2207,10 +2215,22 @@ func (e ToplevelWmCapabilities) String() string {
 //	Clients must send an ack_configure in response to this event. See
 //	xdg_surface.configure and xdg_surface.ack_configure for details.
 type ToplevelConfigureEvent struct {
-	proxy runtime.Proxy
-	Width int32
-	Height int32
-	States []byte
+	width  int32
+	height int32
+	states []byte
+	proxy  runtime.Proxy
+}
+
+func (e *ToplevelConfigureEvent) Width() int32 {
+	return e.width
+}
+
+func (e *ToplevelConfigureEvent) Height() int32 {
+	return e.height
+}
+
+func (e *ToplevelConfigureEvent) States() []byte {
+	return e.states
 }
 
 func (e *ToplevelConfigureEvent) Proxy() runtime.Proxy {
@@ -2253,9 +2273,17 @@ func (e *ToplevelCloseEvent) Proxy() runtime.Proxy {
 //	xdg_toplevel.configure_bounds will be sent, followed by
 //	xdg_toplevel.configure and xdg_surface.configure.
 type ToplevelConfigureBoundsEvent struct {
-	proxy runtime.Proxy
-	Width int32
-	Height int32
+	width  int32
+	height int32
+	proxy  runtime.Proxy
+}
+
+func (e *ToplevelConfigureBoundsEvent) Width() int32 {
+	return e.width
+}
+
+func (e *ToplevelConfigureBoundsEvent) Height() int32 {
+	return e.height
 }
 
 func (e *ToplevelConfigureBoundsEvent) Proxy() runtime.Proxy {
@@ -2285,9 +2313,13 @@ func (e *ToplevelConfigureBoundsEvent) Proxy() runtime.Proxy {
 //	The capabilities are sent as an array of 32-bit unsigned integers in
 //	native endianness.
 type ToplevelWmCapabilitiesEvent struct {
-	proxy runtime.Proxy
-	// Capabilities array of 32-bit capabilities
-	Capabilities []byte
+	capabilities []byte
+	proxy        runtime.Proxy
+}
+
+// Capabilities array of 32-bit capabilities
+func (e *ToplevelWmCapabilitiesEvent) Capabilities() []byte {
+	return e.capabilities
 }
 
 func (e *ToplevelWmCapabilitiesEvent) Proxy() runtime.Proxy {
@@ -2305,14 +2337,14 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &ToplevelConfigureEvent{}
 		e.proxy = i
 		l := 0
-		e.Width = int32(runtime.Uint32(data[l : l+4]))
+		e.width = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Height = int32(runtime.Uint32(data[l : l+4]))
+		e.height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		statesLen := int(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.States = make([]byte, statesLen)
-		copy(e.States, data[l:l+statesLen])
+		e.states = make([]byte, statesLen)
+		copy(e.states, data[l:l+statesLen])
 		l += statesLen
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)
@@ -2337,9 +2369,9 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		e := &ToplevelConfigureBoundsEvent{}
 		e.proxy = i
 		l := 0
-		e.Width = int32(runtime.Uint32(data[l : l+4]))
+		e.width = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Height = int32(runtime.Uint32(data[l : l+4]))
+		e.height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnConfigureBounds != nil {
 			i.handlers.OnConfigureBounds(e)
@@ -2355,8 +2387,8 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 		l := 0
 		capabilitiesLen := int(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Capabilities = make([]byte, capabilitiesLen)
-		copy(e.Capabilities, data[l:l+capabilitiesLen])
+		e.capabilities = make([]byte, capabilitiesLen)
+		copy(e.capabilities, data[l:l+capabilitiesLen])
 		l += capabilitiesLen
 		if i.handlers != nil && i.handlers.OnWmCapabilities != nil {
 			i.handlers.OnWmCapabilities(e)
@@ -2612,15 +2644,31 @@ func (e PopupError) String() string {
 //	it may be sent again if the popup is setup with an xdg_positioner with
 //	set_reactive requested, or in response to xdg_popup.reposition requests.
 type PopupConfigureEvent struct {
-	proxy runtime.Proxy
-	// X x position relative to parent surface window geometry
-	X int32
-	// Y y position relative to parent surface window geometry
-	Y int32
-	// Width window geometry width
-	Width int32
-	// Height window geometry height
-	Height int32
+	x      int32
+	y      int32
+	width  int32
+	height int32
+	proxy  runtime.Proxy
+}
+
+// X x position relative to parent surface window geometry
+func (e *PopupConfigureEvent) X() int32 {
+	return e.x
+}
+
+// Y y position relative to parent surface window geometry
+func (e *PopupConfigureEvent) Y() int32 {
+	return e.y
+}
+
+// Width window geometry width
+func (e *PopupConfigureEvent) Width() int32 {
+	return e.width
+}
+
+// Height window geometry height
+func (e *PopupConfigureEvent) Height() int32 {
+	return e.height
 }
 
 func (e *PopupConfigureEvent) Proxy() runtime.Proxy {
@@ -2658,9 +2706,13 @@ func (e *PopupPopupDoneEvent) Proxy() runtime.Proxy {
 //	acknowledge the new popup configuration for the new position to take
 //	effect. See xdg_surface.ack_configure for details.
 type PopupRepositionedEvent struct {
+	token uint32
 	proxy runtime.Proxy
-	// Token reposition request token
-	Token uint32
+}
+
+// Token reposition request token
+func (e *PopupRepositionedEvent) Token() uint32 {
+	return e.token
 }
 
 func (e *PopupRepositionedEvent) Proxy() runtime.Proxy {
@@ -2678,13 +2730,13 @@ func (i *Popup) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 		e := &PopupConfigureEvent{}
 		e.proxy = i
 		l := 0
-		e.X = int32(runtime.Uint32(data[l : l+4]))
+		e.x = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Y = int32(runtime.Uint32(data[l : l+4]))
+		e.y = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Width = int32(runtime.Uint32(data[l : l+4]))
+		e.width = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		e.Height = int32(runtime.Uint32(data[l : l+4]))
+		e.height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)
@@ -2709,7 +2761,7 @@ func (i *Popup) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 		e := &PopupRepositionedEvent{}
 		e.proxy = i
 		l := 0
-		e.Token = runtime.Uint32(data[l : l+4])
+		e.token = runtime.Uint32(data[l : l+4])
 		l += 4
 		if i.handlers != nil && i.handlers.OnRepositioned != nil {
 			i.handlers.OnRepositioned(e)
