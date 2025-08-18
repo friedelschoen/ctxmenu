@@ -9,11 +9,13 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/friedelschoen/ctxmenu/proto"
 	"github.com/friedelschoen/wayland"
-	"github.com/veandco/go-sdl2/sdl"
+	"github.com/friedelschoen/wayland/xkb"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
@@ -251,7 +253,7 @@ func (QuitEvent) Proxy() wayland.Proxy {
 }
 
 /* run event loop */
-func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, err error) {
+func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 	if err := rootmenu.show(nil); err != nil {
 		return def, err
 	}
@@ -262,6 +264,7 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, err error) {
 	var previtem *Item[T]
 	// curmenu.selected := -1
 	var hasleft *time.Timer
+	var kb *xkb.Keyboard
 	warped := false
 	action := Action(0)
 	quit := make(chan struct{})
@@ -285,6 +288,7 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, err error) {
 				hasleft.Stop()
 				hasleft = nil
 			}
+			curmenu = rootmenu.getmenu(ev.Surface.ID())
 			action = ActionDraw
 		case *proto.PointerMotionEvent:
 			curY = int(ev.SurfaceY)
@@ -343,7 +347,7 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, err error) {
 				break
 			}
 		case *proto.PointerButtonEvent:
-			if ev.State != sdl.PRESSED {
+			if ev.State != proto.PointerButtonStatePressed {
 				break
 			}
 			menu := curmenu
@@ -375,100 +379,124 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, err error) {
 			}
 			curmenu.selected = 0
 			action = ActionClear | ActionMap | ActionDraw
-			if ev.Button == sdl.BUTTON_MIDDLE {
+			if ev.Button == uint32(wayland.ButtonMiddle) {
 				action |= ActionWarp
 			}
 		case *proto.KeyboardKeymapEvent:
 			if ev.Format != proto.KeyboardKeymapFormatXkbV1 {
 				log.Printf("unsupported keymap: %v\n", ev.Format)
-			}
-		case *proto.KeyboardKeyEvent:
-			if ev.State != proto.KeyboardKeyStatePressed {
 				break
 			}
-			fmt.Printf("%d: %c\n", ev.Key, ev.Key)
-
-			// /* esc closes ctxmenu when current menu is the root menu */
-			// if ev.Keysym.Sym == sdl.K_ESCAPE && curmenu.caller == nil {
-			// 	return def, ErrExited
+			if kb != nil {
+				kb.Close()
+				kb = nil
+			}
+			format, err := syscall.Mmap(ev.Fd, 0, int(ev.Size), syscall.PROT_READ, syscall.MAP_PRIVATE)
+			if err != nil {
+				log.Fatalf("unable to create mapping: %v", err)
+				break
+			}
+			defer syscall.Munmap(format)
+			kb, err = xkb.NewFromKeymapText(format, "")
+			if err != nil {
+				log.Fatalf("unable to create mapping: %v", err)
+				break
+			}
+		case *proto.KeyboardKeyEvent:
+			// if ev.State != proto.KeyboardKeyStatePressed {
+			// 	break
 			// }
+			/* keyboard mapping is not set yet */
+			if kb == nil {
+				break
+			}
+			key, err := kb.Translate(ev.Key+8, ev.State == proto.KeyboardKeyStatePressed)
+			if err != nil {
+				log.Printf("unable to translate key: %v\n", err)
+				break
+			}
+			fmt.Printf("key: %s [%c], composed: %v\n", key.Name, key.Char, key.Composed)
 
-			// /* cycle through menu */
-			// curmenu.selected = -1
-			// switch ev.Keysym.Sym {
-			// case sdl.K_HOME:
-			// 	curmenu.selected = curmenu.itemcycle(ItemFirst)
-			// 	action = ActionClear | ActionDraw
-			// case sdl.K_END:
-			// 	curmenu.selected = curmenu.itemcycle(ItemLast)
-			// 	action = ActionClear | ActionDraw
-			// case sdl.K_TAB:
-			// 	if ev.Keysym.Mod&sdl.KMOD_SHIFT > 0 {
-			// 		if len(buf) > 0 {
-			// 			curmenu.selected = curmenu.matchitem(string(buf), -1)
-			// 			action = ActionDraw
-			// 		} else {
-			// 			curmenu.selected = curmenu.itemcycle(ItemPrev)
-			// 			action = ActionClear | ActionDraw
-			// 		}
-			// 	} else {
-			// 		if len(buf) > 0 {
-			// 			curmenu.selected = curmenu.matchitem(string(buf), 1)
-			// 			action = ActionDraw
-			// 		} else {
-			// 			curmenu.selected = curmenu.itemcycle(ItemNext)
-			// 			action = ActionClear | ActionDraw
-			// 		}
-			// 	}
-			// case sdl.K_UP:
-			// 	curmenu.selected = curmenu.itemcycle(ItemPrev)
-			// 	action = ActionClear | ActionDraw
-			// case sdl.K_DOWN:
-			// 	curmenu.selected = curmenu.itemcycle(ItemNext)
-			// 	action = ActionClear | ActionDraw
-			// case '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			// 	item := curmenu.itemcycle(ItemFirst)
-			// 	for range ev.Keysym.Sym - '0' {
-			// 		curmenu.selected = item
-			// 		item = curmenu.itemcycle(ItemNext)
-			// 	}
-			// 	curmenu.selected = item
-			// 	action = ActionClear | ActionDraw
-			// case sdl.K_RETURN, sdl.K_RIGHT:
-			// 	if curmenu.selected != -1 {
-			// 		if curmenu.items[curmenu.selected].label == "" {
-			// 			return /* ignore separators */
-			// 		}
-			// 		if curmenu.items[curmenu.selected].submenu != nil {
-			// 			curmenu = curmenu.items[curmenu.selected].submenu
-			// 			curmenu.show(curmenu)
-			// 		} else {
-			// 			return curmenu.items[curmenu.selected].output, nil
-			// 		}
-			// 		curmenu.selected = 0
-			// 		action = ActionClear | ActionMap | ActionDraw
-			// 	}
-			// case sdl.K_ESCAPE, sdl.K_LEFT:
-			// 	if curmenu.caller != nil {
-			// 		curmenu.selected = curmenu.caller.selected
-			// 		curmenu = curmenu.caller
-			// 		action = ActionClear | ActionMap | ActionDraw
-			// 	}
-			// case sdl.K_BACKSPACE, sdl.K_CLEAR, sdl.K_DELETE:
-			// 	action = ActionClear | ActionDraw
-			// default:
-			// 	if !unicode.IsPrint(rune(ev.Keysym.Sym)) {
-			// 		break
-			// 	}
-			// 	for range 2 {
-			// 		buf = append(buf, byte(ev.Keysym.Sym))
-			// 		if curmenu.selected = curmenu.matchitem(string(buf), 0); curmenu.selected != -1 {
-			// 			break
-			// 		}
-			// 		buf = buf[:0]
-			// 	}
-			// 	action = ActionDraw
-			// }
+			/* esc closes ctxmenu when current menu is the root menu */
+			if key.Sym == xkb.K_Escape && curmenu.caller == nil {
+				return def, ErrExited
+			}
+
+			/* cycle through menu */
+			switch key.Sym {
+			case xkb.K_Home:
+				curmenu.selected = curmenu.itemcycle(ItemFirst)
+				action = ActionClear | ActionDraw
+			case xkb.K_End:
+				curmenu.selected = curmenu.itemcycle(ItemLast)
+				action = ActionClear | ActionDraw
+			case xkb.K_Tab:
+				if key.Mod&xkb.ModShift > 0 {
+					if len(buf) > 0 {
+						curmenu.selected = curmenu.matchitem(string(buf), -1)
+						action = ActionDraw
+					} else {
+						curmenu.selected = curmenu.itemcycle(ItemPrev)
+						action = ActionClear | ActionDraw
+					}
+				} else {
+					if len(buf) > 0 {
+						curmenu.selected = curmenu.matchitem(string(buf), 1)
+						action = ActionDraw
+					} else {
+						curmenu.selected = curmenu.itemcycle(ItemNext)
+						action = ActionClear | ActionDraw
+					}
+				}
+			case xkb.K_Up:
+				curmenu.selected = curmenu.itemcycle(ItemPrev)
+				action = ActionClear | ActionDraw
+			case xkb.K_Down:
+				curmenu.selected = curmenu.itemcycle(ItemNext)
+				action = ActionClear | ActionDraw
+			case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+				item := curmenu.itemcycle(ItemFirst)
+				for range key.Char - '0' {
+					curmenu.selected = item
+					item = curmenu.itemcycle(ItemNext)
+				}
+				curmenu.selected = item
+				action = ActionClear | ActionDraw
+			case xkb.K_Return, xkb.K_Right:
+				if curmenu.selected != -1 {
+					if curmenu.items[curmenu.selected].label == "" {
+						return /* ignore separators */
+					}
+					if curmenu.items[curmenu.selected].submenu != nil {
+						curmenu = curmenu.items[curmenu.selected].submenu
+						curmenu.show(curmenu)
+					} else {
+						return curmenu.items[curmenu.selected].output, nil
+					}
+					curmenu.selected = 0
+					action = ActionClear | ActionMap | ActionDraw
+				}
+			case xkb.K_Escape, xkb.K_Left:
+				if curmenu.caller != nil {
+					curmenu.selected = curmenu.caller.selected
+					curmenu = curmenu.caller
+					action = ActionClear | ActionMap | ActionDraw
+				}
+			case xkb.K_BackSpace, xkb.K_Clear, xkb.K_Delete:
+				action = ActionClear | ActionDraw
+			default:
+				if !unicode.IsPrint(rune(key.Sym)) {
+					break
+				}
+				for range 2 {
+					buf = append(buf, byte(key.Sym))
+					if curmenu.selected = curmenu.matchitem(string(buf), 0); curmenu.selected != -1 {
+						break
+					}
+					buf = buf[:0]
+				}
+				action = ActionDraw
+			}
 		}
 		if action&ActionClear != 0 {
 			buf = buf[:0]
@@ -483,26 +511,12 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, err error) {
 	}
 }
 
-func (ctxmenu *ContextMenu) pushEvent(e wayland.Event) {
-	ctxmenu.events <- e
-}
-
 func (ctxmenu *ContextMenu) getPointer() {
-	ctxmenu.pointer = ctxmenu.seat.GetPointer(&proto.PointerHandlers{
-		OnEnter:  ctxmenu.pushEvent,
-		OnLeave:  ctxmenu.pushEvent,
-		OnMotion: ctxmenu.pushEvent,
-		OnButton: ctxmenu.pushEvent,
-		OnAxis:   ctxmenu.pushEvent,
-	})
+	ctxmenu.pointer = ctxmenu.seat.GetPointer(nil)
 }
 
 func (ctxmenu *ContextMenu) getKeyboard() {
-	ctxmenu.keyboard = ctxmenu.seat.GetKeyboard(&proto.KeyboardHandlers{
-		OnEnter: ctxmenu.pushEvent,
-		OnLeave: ctxmenu.pushEvent,
-		OnKey:   ctxmenu.pushEvent,
-	})
+	ctxmenu.keyboard = ctxmenu.seat.GetKeyboard(nil)
 }
 
 func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
@@ -539,13 +553,17 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 		return nil, err
 	}
 
-	/* event queue with a buffer of 64 */
-	ctxmenu.events = make(chan wayland.Event, 64)
+	ctxmenu.x = 100
+	ctxmenu.y = 100
 
 	ctxmenu.conn, err = wayland.Connect(wlDisplay)
 	if err != nil {
 		log.Fatalf("unable to connect to wayland server: %v", err)
 	}
+
+	/* event queue with a buffer of 64 */
+	ctxmenu.events = make(chan wayland.Event, 64)
+	ctxmenu.conn.SetDrain(ctxmenu.events)
 
 	// Connect to wayland server
 	ctxmenu.display = proto.NewDisplay(&proto.DisplayHandlers{

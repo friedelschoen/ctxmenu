@@ -187,8 +187,11 @@ func (e DisplayError) String() string {
 //	of the error, for (debugging) convenience.
 type DisplayErrorEvent struct {
 	proxy runtime.Proxy
+	// ObjectId object where the error occurred
 	ObjectId runtime.Proxy
+	// Code error code
 	Code uint32
+	// Message error description
 	Message string
 }
 
@@ -205,19 +208,20 @@ func (e *DisplayErrorEvent) Proxy() runtime.Proxy {
 //	it will know that it can safely reuse the object ID.
 type DisplayDeleteIdEvent struct {
 	proxy runtime.Proxy
+	// Id deleted object ID
 	Id uint32
 }
 
 func (e *DisplayDeleteIdEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Display) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Display) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnError == nil {
+		if (i.handlers != nil && i.handlers.OnError == nil) && drain == nil {
 			return
 		}
 		e := &DisplayErrorEvent{}
@@ -231,9 +235,13 @@ func (i *Display) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Message = runtime.String(data[l : l+messageLen])
 		l += messageLen
-		i.handlers.OnError(e)
+		if i.handlers != nil && i.handlers.OnError != nil {
+			i.handlers.OnError(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnDeleteId == nil {
+		if (i.handlers != nil && i.handlers.OnDeleteId == nil) && drain == nil {
 			return
 		}
 		e := &DisplayDeleteIdEvent{}
@@ -241,7 +249,11 @@ func (i *Display) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Id = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnDeleteId(e)
+		if i.handlers != nil && i.handlers.OnDeleteId != nil {
+			i.handlers.OnDeleteId(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -351,8 +363,11 @@ func (i *Registry) Destroy() error {
 //	given version of the given interface.
 type RegistryGlobalEvent struct {
 	proxy runtime.Proxy
+	// Name numeric name of the global object
 	Name uint32
+	// Interface interface implemented by the object
 	Interface string
+	// Version interface version
 	Version uint32
 }
 
@@ -377,19 +392,20 @@ func (e *RegistryGlobalEvent) BindInterface() (uint32, string, uint32) {
 //	the global going away and a client sending a request to it.
 type RegistryGlobalRemoveEvent struct {
 	proxy runtime.Proxy
+	// Name numeric name of the global object
 	Name uint32
 }
 
 func (e *RegistryGlobalRemoveEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Registry) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Registry) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnGlobal == nil {
+		if (i.handlers != nil && i.handlers.OnGlobal == nil) && drain == nil {
 			return
 		}
 		e := &RegistryGlobalEvent{}
@@ -403,9 +419,13 @@ func (i *Registry) Dispatch(opcode uint32, fd int, data []byte) {
 		l += interfaceLen
 		e.Version = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnGlobal(e)
+		if i.handlers != nil && i.handlers.OnGlobal != nil {
+			i.handlers.OnGlobal(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnGlobalRemove == nil {
+		if (i.handlers != nil && i.handlers.OnGlobalRemove == nil) && drain == nil {
 			return
 		}
 		e := &RegistryGlobalRemoveEvent{}
@@ -413,7 +433,11 @@ func (i *Registry) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Name = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnGlobalRemove(e)
+		if i.handlers != nil && i.handlers.OnGlobalRemove != nil {
+			i.handlers.OnGlobalRemove(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -457,19 +481,20 @@ func (i *Callback) Destroy() error {
 //	Notify the client when the related request is done.
 type CallbackDoneEvent struct {
 	proxy runtime.Proxy
+	// CallbackData request-specific data for the callback
 	CallbackData uint32
 }
 
 func (e *CallbackDoneEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Callback) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Callback) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnDone == nil {
+		if (i.handlers != nil && i.handlers.OnDone == nil) && drain == nil {
 			return
 		}
 		e := &CallbackDoneEvent{}
@@ -477,7 +502,11 @@ func (i *Callback) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.CallbackData = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnDone(e)
+		if i.handlers != nil && i.handlers.OnDone != nil {
+			i.handlers.OnDone(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -552,7 +581,7 @@ func (i *Compositor) Destroy() error {
 	i.Conn().Unregister(i)
 	return nil
 }
-func (i *Compositor) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *Compositor) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 
 // ShmPool: a shared memory pool
@@ -690,7 +719,7 @@ func (i *ShmPool) Resize(size int32) {
 	}
 	return
 }
-func (i *ShmPool) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *ShmPool) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 
 // Shm: shared memory support
@@ -1597,19 +1626,20 @@ func (e ShmFormat) String() string {
 //	argb8888 and xrgb8888.
 type ShmFormatEvent struct {
 	proxy runtime.Proxy
+	// Format buffer pixel format
 	Format ShmFormat
 }
 
 func (e *ShmFormatEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Shm) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Shm) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnFormat == nil {
+		if (i.handlers != nil && i.handlers.OnFormat == nil) && drain == nil {
 			return
 		}
 		e := &ShmFormatEvent{}
@@ -1617,7 +1647,11 @@ func (i *Shm) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Format = ShmFormat(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnFormat(e)
+		if i.handlers != nil && i.handlers.OnFormat != nil {
+			i.handlers.OnFormat(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -1717,18 +1751,22 @@ type BufferReleaseEvent struct {
 func (e *BufferReleaseEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Buffer) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Buffer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnRelease == nil {
+		if (i.handlers != nil && i.handlers.OnRelease == nil) && drain == nil {
 			return
 		}
 		e := &BufferReleaseEvent{}
 		e.proxy = i
-		i.handlers.OnRelease(e)
+		if i.handlers != nil && i.handlers.OnRelease != nil {
+			i.handlers.OnRelease(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -2005,6 +2043,7 @@ func (e DataOfferError) String() string {
 //	event per offered mime type.
 type DataOfferOfferEvent struct {
 	proxy runtime.Proxy
+	// MimeType offered mime type
 	MimeType string
 }
 
@@ -2020,6 +2059,7 @@ func (e *DataOfferOfferEvent) Proxy() runtime.Proxy {
 //	wl_data_source.set_actions.
 type DataOfferSourceActionsEvent struct {
 	proxy runtime.Proxy
+	// SourceActions actions offered by the data source
 	SourceActions DataDeviceManagerDndAction
 }
 
@@ -2066,19 +2106,20 @@ func (e *DataOfferSourceActionsEvent) Proxy() runtime.Proxy {
 //	must happen before the call to wl_data_offer.finish.
 type DataOfferActionEvent struct {
 	proxy runtime.Proxy
+	// DndAction action selected by the compositor
 	DndAction DataDeviceManagerDndAction
 }
 
 func (e *DataOfferActionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnOffer == nil {
+		if (i.handlers != nil && i.handlers.OnOffer == nil) && drain == nil {
 			return
 		}
 		e := &DataOfferOfferEvent{}
@@ -2088,9 +2129,13 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.MimeType = runtime.String(data[l : l+mimeTypeLen])
 		l += mimeTypeLen
-		i.handlers.OnOffer(e)
+		if i.handlers != nil && i.handlers.OnOffer != nil {
+			i.handlers.OnOffer(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnSourceActions == nil {
+		if (i.handlers != nil && i.handlers.OnSourceActions == nil) && drain == nil {
 			return
 		}
 		e := &DataOfferSourceActionsEvent{}
@@ -2098,9 +2143,13 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.SourceActions = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnSourceActions(e)
+		if i.handlers != nil && i.handlers.OnSourceActions != nil {
+			i.handlers.OnSourceActions(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnAction == nil {
+		if (i.handlers != nil && i.handlers.OnAction == nil) && drain == nil {
 			return
 		}
 		e := &DataOfferActionEvent{}
@@ -2108,7 +2157,11 @@ func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.DndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnAction(e)
+		if i.handlers != nil && i.handlers.OnAction != nil {
+			i.handlers.OnAction(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -2268,6 +2321,7 @@ func (e DataSourceError) String() string {
 //	Used for feedback during drag-and-drop.
 type DataSourceTargetEvent struct {
 	proxy runtime.Proxy
+	// MimeType mime type accepted by the target
 	MimeType string
 }
 
@@ -2282,7 +2336,9 @@ func (e *DataSourceTargetEvent) Proxy() runtime.Proxy {
 //	close it.
 type DataSourceSendEvent struct {
 	proxy runtime.Proxy
+	// MimeType mime type for the data
 	MimeType string
+	// Fd file descriptor for the data
 	Fd int
 }
 
@@ -2384,19 +2440,20 @@ func (e *DataSourceDndFinishedEvent) Proxy() runtime.Proxy {
 //	they reflect the current action.
 type DataSourceActionEvent struct {
 	proxy runtime.Proxy
+	// DndAction action selected by the compositor
 	DndAction DataDeviceManagerDndAction
 }
 
 func (e *DataSourceActionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnTarget == nil {
+		if (i.handlers != nil && i.handlers.OnTarget == nil) && drain == nil {
 			return
 		}
 		e := &DataSourceTargetEvent{}
@@ -2406,9 +2463,13 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.MimeType = runtime.String(data[l : l+mimeTypeLen])
 		l += mimeTypeLen
-		i.handlers.OnTarget(e)
+		if i.handlers != nil && i.handlers.OnTarget != nil {
+			i.handlers.OnTarget(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnSend == nil {
+		if (i.handlers != nil && i.handlers.OnSend == nil) && drain == nil {
 			if fd != -1 {
 				syscall.Close(fd)
 			}
@@ -2422,30 +2483,46 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) {
 		e.MimeType = runtime.String(data[l : l+mimeTypeLen])
 		l += mimeTypeLen
 		e.Fd = fd
-		i.handlers.OnSend(e)
+		if i.handlers != nil && i.handlers.OnSend != nil {
+			i.handlers.OnSend(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnCancelled == nil {
+		if (i.handlers != nil && i.handlers.OnCancelled == nil) && drain == nil {
 			return
 		}
 		e := &DataSourceCancelledEvent{}
 		e.proxy = i
-		i.handlers.OnCancelled(e)
+		if i.handlers != nil && i.handlers.OnCancelled != nil {
+			i.handlers.OnCancelled(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 3:
-		if i.handlers.OnDndDropPerformed == nil {
+		if (i.handlers != nil && i.handlers.OnDndDropPerformed == nil) && drain == nil {
 			return
 		}
 		e := &DataSourceDndDropPerformedEvent{}
 		e.proxy = i
-		i.handlers.OnDndDropPerformed(e)
+		if i.handlers != nil && i.handlers.OnDndDropPerformed != nil {
+			i.handlers.OnDndDropPerformed(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 4:
-		if i.handlers.OnDndFinished == nil {
+		if (i.handlers != nil && i.handlers.OnDndFinished == nil) && drain == nil {
 			return
 		}
 		e := &DataSourceDndFinishedEvent{}
 		e.proxy = i
-		i.handlers.OnDndFinished(e)
+		if i.handlers != nil && i.handlers.OnDndFinished != nil {
+			i.handlers.OnDndFinished(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 5:
-		if i.handlers.OnAction == nil {
+		if (i.handlers != nil && i.handlers.OnAction == nil) && drain == nil {
 			return
 		}
 		e := &DataSourceActionEvent{}
@@ -2453,7 +2530,11 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.DndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnAction(e)
+		if i.handlers != nil && i.handlers.OnAction != nil {
+			i.handlers.OnAction(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -2665,6 +2746,7 @@ func (e DataDeviceError) String() string {
 //	mime types it offers.
 type DataDeviceDataOfferEvent struct {
 	proxy runtime.Proxy
+	// Id the new data_offer object
 	Id *DataOffer
 }
 
@@ -2680,10 +2762,15 @@ func (e *DataDeviceDataOfferEvent) Proxy() runtime.Proxy {
 //	coordinates.
 type DataDeviceEnterEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the enter event
 	Serial uint32
+	// Surface client surface entered
 	Surface *WlSurface
+	// X surface-local x coordinate
 	X float64
+	// Y surface-local y coordinate
 	Y float64
+	// Id source data_offer object
 	Id *DataOffer
 }
 
@@ -2712,8 +2799,11 @@ func (e *DataDeviceLeaveEvent) Proxy() runtime.Proxy {
 //	coordinates.
 type DataDeviceMotionEvent struct {
 	proxy runtime.Proxy
+	// Time timestamp with millisecond granularity
 	Time uint32
+	// X surface-local x coordinate
 	X float64
+	// Y surface-local y coordinate
 	Y float64
 }
 
@@ -2760,19 +2850,20 @@ func (e *DataDeviceDropEvent) Proxy() runtime.Proxy {
 //	data_offer, if any, upon receiving this event.
 type DataDeviceSelectionEvent struct {
 	proxy runtime.Proxy
+	// Id selection data_offer object
 	Id *DataOffer
 }
 
 func (e *DataDeviceSelectionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnDataOffer == nil {
+		if (i.handlers != nil && i.handlers.OnDataOffer == nil) && drain == nil {
 			return
 		}
 		e := &DataDeviceDataOfferEvent{}
@@ -2780,9 +2871,13 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
 		l += 4
-		i.handlers.OnDataOffer(e)
+		if i.handlers != nil && i.handlers.OnDataOffer != nil {
+			i.handlers.OnDataOffer(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnEnter == nil {
+		if (i.handlers != nil && i.handlers.OnEnter == nil) && drain == nil {
 			return
 		}
 		e := &DataDeviceEnterEvent{}
@@ -2798,16 +2893,24 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
 		l += 4
-		i.handlers.OnEnter(e)
+		if i.handlers != nil && i.handlers.OnEnter != nil {
+			i.handlers.OnEnter(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnLeave == nil {
+		if (i.handlers != nil && i.handlers.OnLeave == nil) && drain == nil {
 			return
 		}
 		e := &DataDeviceLeaveEvent{}
 		e.proxy = i
-		i.handlers.OnLeave(e)
+		if i.handlers != nil && i.handlers.OnLeave != nil {
+			i.handlers.OnLeave(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 3:
-		if i.handlers.OnMotion == nil {
+		if (i.handlers != nil && i.handlers.OnMotion == nil) && drain == nil {
 			return
 		}
 		e := &DataDeviceMotionEvent{}
@@ -2819,16 +2922,24 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Y = runtime.Fixed(data[l : l+4])
 		l += 4
-		i.handlers.OnMotion(e)
+		if i.handlers != nil && i.handlers.OnMotion != nil {
+			i.handlers.OnMotion(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 4:
-		if i.handlers.OnDrop == nil {
+		if (i.handlers != nil && i.handlers.OnDrop == nil) && drain == nil {
 			return
 		}
 		e := &DataDeviceDropEvent{}
 		e.proxy = i
-		i.handlers.OnDrop(e)
+		if i.handlers != nil && i.handlers.OnDrop != nil {
+			i.handlers.OnDrop(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 5:
-		if i.handlers.OnSelection == nil {
+		if (i.handlers != nil && i.handlers.OnSelection == nil) && drain == nil {
 			return
 		}
 		e := &DataDeviceSelectionEvent{}
@@ -2836,7 +2947,11 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
 		l += 4
-		i.handlers.OnSelection(e)
+		if i.handlers != nil && i.handlers.OnSelection != nil {
+			i.handlers.OnSelection(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -3000,7 +3115,7 @@ func (e DataDeviceManagerDndAction) Value() string {
 func (e DataDeviceManagerDndAction) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *DataDeviceManager) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *DataDeviceManager) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 
 // Shell: create desktop-style surfaces
@@ -3101,7 +3216,7 @@ func (e ShellError) Value() string {
 func (e ShellError) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *Shell) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *Shell) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 
 // ShellSurface: desktop-style metadata interface
@@ -3692,6 +3807,7 @@ func (e ShellSurfaceFullscreenMethod) String() string {
 //	requests. A client is expected to reply with a pong request.
 type ShellSurfacePingEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the ping
 	Serial uint32
 }
 
@@ -3720,8 +3836,11 @@ func (e *ShellSurfacePingEvent) Proxy() runtime.Proxy {
 //	in surface-local coordinates.
 type ShellSurfaceConfigureEvent struct {
 	proxy runtime.Proxy
+	// Edges how the surface was resized
 	Edges ShellSurfaceResize
+	// Width new width of the surface
 	Width int32
+	// Height new height of the surface
 	Height int32
 }
 
@@ -3741,13 +3860,13 @@ type ShellSurfacePopupDoneEvent struct {
 func (e *ShellSurfacePopupDoneEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *ShellSurface) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *ShellSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnPing == nil {
+		if (i.handlers != nil && i.handlers.OnPing == nil) && drain == nil {
 			return
 		}
 		e := &ShellSurfacePingEvent{}
@@ -3755,9 +3874,13 @@ func (i *ShellSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnPing(e)
+		if i.handlers != nil && i.handlers.OnPing != nil {
+			i.handlers.OnPing(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnConfigure == nil {
+		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
 			return
 		}
 		e := &ShellSurfaceConfigureEvent{}
@@ -3769,14 +3892,22 @@ func (i *ShellSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnConfigure(e)
+		if i.handlers != nil && i.handlers.OnConfigure != nil {
+			i.handlers.OnConfigure(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnPopupDone == nil {
+		if (i.handlers != nil && i.handlers.OnPopupDone == nil) && drain == nil {
 			return
 		}
 		e := &ShellSurfacePopupDoneEvent{}
 		e.proxy = i
-		i.handlers.OnPopupDone(e)
+		if i.handlers != nil && i.handlers.OnPopupDone != nil {
+			i.handlers.OnPopupDone(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -4510,6 +4641,7 @@ func (e WlSurfaceError) String() string {
 //	Note that a surface may be overlapping with zero or more outputs.
 type WlSurfaceEnterEvent struct {
 	proxy runtime.Proxy
+	// Output output entered by the surface
 	Output *Output
 }
 
@@ -4530,6 +4662,7 @@ func (e *WlSurfaceEnterEvent) Proxy() runtime.Proxy {
 //	used instead.
 type WlSurfaceLeaveEvent struct {
 	proxy runtime.Proxy
+	// Output output left by the surface
 	Output *Output
 }
 
@@ -4553,6 +4686,7 @@ func (e *WlSurfaceLeaveEvent) Proxy() runtime.Proxy {
 //	The compositor shall emit a scale value greater than 0.
 type WlSurfacePreferredBufferScaleEvent struct {
 	proxy runtime.Proxy
+	// Factor preferred scaling factor
 	Factor int32
 }
 
@@ -4573,19 +4707,20 @@ func (e *WlSurfacePreferredBufferScaleEvent) Proxy() runtime.Proxy {
 //	surface buffer more efficiently.
 type WlSurfacePreferredBufferTransformEvent struct {
 	proxy runtime.Proxy
+	// Transform preferred transform
 	Transform OutputTransform
 }
 
 func (e *WlSurfacePreferredBufferTransformEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnEnter == nil {
+		if (i.handlers != nil && i.handlers.OnEnter == nil) && drain == nil {
 			return
 		}
 		e := &WlSurfaceEnterEvent{}
@@ -4593,9 +4728,13 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Output = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
 		l += 4
-		i.handlers.OnEnter(e)
+		if i.handlers != nil && i.handlers.OnEnter != nil {
+			i.handlers.OnEnter(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnLeave == nil {
+		if (i.handlers != nil && i.handlers.OnLeave == nil) && drain == nil {
 			return
 		}
 		e := &WlSurfaceLeaveEvent{}
@@ -4603,9 +4742,13 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Output = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
 		l += 4
-		i.handlers.OnLeave(e)
+		if i.handlers != nil && i.handlers.OnLeave != nil {
+			i.handlers.OnLeave(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnPreferredBufferScale == nil {
+		if (i.handlers != nil && i.handlers.OnPreferredBufferScale == nil) && drain == nil {
 			return
 		}
 		e := &WlSurfacePreferredBufferScaleEvent{}
@@ -4613,9 +4756,13 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Factor = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnPreferredBufferScale(e)
+		if i.handlers != nil && i.handlers.OnPreferredBufferScale != nil {
+			i.handlers.OnPreferredBufferScale(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 3:
-		if i.handlers.OnPreferredBufferTransform == nil {
+		if (i.handlers != nil && i.handlers.OnPreferredBufferTransform == nil) && drain == nil {
 			return
 		}
 		e := &WlSurfacePreferredBufferTransformEvent{}
@@ -4623,7 +4770,11 @@ func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Transform = OutputTransform(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnPreferredBufferTransform(e)
+		if i.handlers != nil && i.handlers.OnPreferredBufferTransform != nil {
+			i.handlers.OnPreferredBufferTransform(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -4866,6 +5017,7 @@ func (e SeatError) String() string {
 //	keyboard and touch capabilities, respectively.
 type SeatCapabilitiesEvent struct {
 	proxy runtime.Proxy
+	// Capabilities capabilities of the seat
 	Capabilities SeatCapability
 }
 
@@ -4893,19 +5045,20 @@ func (e *SeatCapabilitiesEvent) Proxy() runtime.Proxy {
 //	destroyed and re-created later.
 type SeatNameEvent struct {
 	proxy runtime.Proxy
+	// Name seat identifier
 	Name string
 }
 
 func (e *SeatNameEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Seat) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Seat) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnCapabilities == nil {
+		if (i.handlers != nil && i.handlers.OnCapabilities == nil) && drain == nil {
 			return
 		}
 		e := &SeatCapabilitiesEvent{}
@@ -4913,9 +5066,13 @@ func (i *Seat) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Capabilities = SeatCapability(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnCapabilities(e)
+		if i.handlers != nil && i.handlers.OnCapabilities != nil {
+			i.handlers.OnCapabilities(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnName == nil {
+		if (i.handlers != nil && i.handlers.OnName == nil) && drain == nil {
 			return
 		}
 		e := &SeatNameEvent{}
@@ -4925,7 +5082,11 @@ func (i *Seat) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Name = runtime.String(data[l : l+nameLen])
 		l += nameLen
-		i.handlers.OnName(e)
+		if i.handlers != nil && i.handlers.OnName != nil {
+			i.handlers.OnName(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -5279,9 +5440,13 @@ func (e PointerAxisRelativeDirection) String() string {
 //	an appropriate pointer image with the set_cursor request.
 type PointerEnterEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the enter event
 	Serial uint32
+	// Surface surface entered by the pointer
 	Surface *WlSurface
+	// SurfaceX surface-local x coordinate
 	SurfaceX float64
+	// SurfaceY surface-local y coordinate
 	SurfaceY float64
 }
 
@@ -5298,7 +5463,9 @@ func (e *PointerEnterEvent) Proxy() runtime.Proxy {
 //	for the new focus.
 type PointerLeaveEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the leave event
 	Serial uint32
+	// Surface surface left by the pointer
 	Surface *WlSurface
 }
 
@@ -5313,8 +5480,11 @@ func (e *PointerLeaveEvent) Proxy() runtime.Proxy {
 //	focused surface.
 type PointerMotionEvent struct {
 	proxy runtime.Proxy
+	// Time timestamp with millisecond granularity
 	Time uint32
+	// SurfaceX surface-local x coordinate
 	SurfaceX float64
+	// SurfaceY surface-local y coordinate
 	SurfaceY float64
 }
 
@@ -5340,9 +5510,13 @@ func (e *PointerMotionEvent) Proxy() runtime.Proxy {
 //	protocol.
 type PointerButtonEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the button event
 	Serial uint32
+	// Time timestamp with millisecond granularity
 	Time uint32
+	// Button button that produced the event
 	Button uint32
+	// State physical state of the button
 	State PointerButtonState
 }
 
@@ -5370,8 +5544,11 @@ func (e *PointerButtonEvent) Proxy() runtime.Proxy {
 //	scroll distance.
 type PointerAxisEvent struct {
 	proxy runtime.Proxy
+	// Time timestamp with millisecond granularity
 	Time uint32
+	// Axis axis type
 	Axis PointerAxis
+	// Value length of vector in surface-local coordinate space
 	Value float64
 }
 
@@ -5452,6 +5629,7 @@ func (e *PointerFrameEvent) Proxy() runtime.Proxy {
 //	not guaranteed.
 type PointerAxisSourceEvent struct {
 	proxy runtime.Proxy
+	// AxisSource source of the axis event
 	AxisSource PointerAxisSource
 }
 
@@ -5477,7 +5655,9 @@ func (e *PointerAxisSourceEvent) Proxy() runtime.Proxy {
 //	preceding wl_pointer.axis event.
 type PointerAxisStopEvent struct {
 	proxy runtime.Proxy
+	// Time timestamp with millisecond granularity
 	Time uint32
+	// Axis the axis stopped with this event
 	Axis PointerAxis
 }
 
@@ -5519,7 +5699,9 @@ func (e *PointerAxisStopEvent) Proxy() runtime.Proxy {
 //	not guaranteed.
 type PointerAxisDiscreteEvent struct {
 	proxy runtime.Proxy
+	// Axis axis type
 	Axis PointerAxis
+	// Discrete number of steps
 	Discrete int32
 }
 
@@ -5552,7 +5734,9 @@ func (e *PointerAxisDiscreteEvent) Proxy() runtime.Proxy {
 //	not guaranteed.
 type PointerAxisValue120Event struct {
 	proxy runtime.Proxy
+	// Axis axis type
 	Axis PointerAxis
+	// Value120 scroll distance as fraction of 120
 	Value120 int32
 }
 
@@ -5599,20 +5783,22 @@ func (e *PointerAxisValue120Event) Proxy() runtime.Proxy {
 //	guaranteed.
 type PointerAxisRelativeDirectionEvent struct {
 	proxy runtime.Proxy
+	// Axis axis type
 	Axis PointerAxis
+	// Direction physical direction relative to axis motion
 	Direction PointerAxisRelativeDirection
 }
 
 func (e *PointerAxisRelativeDirectionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnEnter == nil {
+		if (i.handlers != nil && i.handlers.OnEnter == nil) && drain == nil {
 			return
 		}
 		e := &PointerEnterEvent{}
@@ -5626,9 +5812,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.SurfaceY = runtime.Fixed(data[l : l+4])
 		l += 4
-		i.handlers.OnEnter(e)
+		if i.handlers != nil && i.handlers.OnEnter != nil {
+			i.handlers.OnEnter(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnLeave == nil {
+		if (i.handlers != nil && i.handlers.OnLeave == nil) && drain == nil {
 			return
 		}
 		e := &PointerLeaveEvent{}
@@ -5638,9 +5828,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
-		i.handlers.OnLeave(e)
+		if i.handlers != nil && i.handlers.OnLeave != nil {
+			i.handlers.OnLeave(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnMotion == nil {
+		if (i.handlers != nil && i.handlers.OnMotion == nil) && drain == nil {
 			return
 		}
 		e := &PointerMotionEvent{}
@@ -5652,9 +5846,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.SurfaceY = runtime.Fixed(data[l : l+4])
 		l += 4
-		i.handlers.OnMotion(e)
+		if i.handlers != nil && i.handlers.OnMotion != nil {
+			i.handlers.OnMotion(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 3:
-		if i.handlers.OnButton == nil {
+		if (i.handlers != nil && i.handlers.OnButton == nil) && drain == nil {
 			return
 		}
 		e := &PointerButtonEvent{}
@@ -5668,9 +5866,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.State = PointerButtonState(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnButton(e)
+		if i.handlers != nil && i.handlers.OnButton != nil {
+			i.handlers.OnButton(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 4:
-		if i.handlers.OnAxis == nil {
+		if (i.handlers != nil && i.handlers.OnAxis == nil) && drain == nil {
 			return
 		}
 		e := &PointerAxisEvent{}
@@ -5682,16 +5884,24 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Value = runtime.Fixed(data[l : l+4])
 		l += 4
-		i.handlers.OnAxis(e)
+		if i.handlers != nil && i.handlers.OnAxis != nil {
+			i.handlers.OnAxis(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 5:
-		if i.handlers.OnFrame == nil {
+		if (i.handlers != nil && i.handlers.OnFrame == nil) && drain == nil {
 			return
 		}
 		e := &PointerFrameEvent{}
 		e.proxy = i
-		i.handlers.OnFrame(e)
+		if i.handlers != nil && i.handlers.OnFrame != nil {
+			i.handlers.OnFrame(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 6:
-		if i.handlers.OnAxisSource == nil {
+		if (i.handlers != nil && i.handlers.OnAxisSource == nil) && drain == nil {
 			return
 		}
 		e := &PointerAxisSourceEvent{}
@@ -5699,9 +5909,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.AxisSource = PointerAxisSource(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnAxisSource(e)
+		if i.handlers != nil && i.handlers.OnAxisSource != nil {
+			i.handlers.OnAxisSource(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 7:
-		if i.handlers.OnAxisStop == nil {
+		if (i.handlers != nil && i.handlers.OnAxisStop == nil) && drain == nil {
 			return
 		}
 		e := &PointerAxisStopEvent{}
@@ -5711,9 +5925,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Axis = PointerAxis(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnAxisStop(e)
+		if i.handlers != nil && i.handlers.OnAxisStop != nil {
+			i.handlers.OnAxisStop(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 8:
-		if i.handlers.OnAxisDiscrete == nil {
+		if (i.handlers != nil && i.handlers.OnAxisDiscrete == nil) && drain == nil {
 			return
 		}
 		e := &PointerAxisDiscreteEvent{}
@@ -5723,9 +5941,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Discrete = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnAxisDiscrete(e)
+		if i.handlers != nil && i.handlers.OnAxisDiscrete != nil {
+			i.handlers.OnAxisDiscrete(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 9:
-		if i.handlers.OnAxisValue120 == nil {
+		if (i.handlers != nil && i.handlers.OnAxisValue120 == nil) && drain == nil {
 			return
 		}
 		e := &PointerAxisValue120Event{}
@@ -5735,9 +5957,13 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Value120 = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnAxisValue120(e)
+		if i.handlers != nil && i.handlers.OnAxisValue120 != nil {
+			i.handlers.OnAxisValue120(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 10:
-		if i.handlers.OnAxisRelativeDirection == nil {
+		if (i.handlers != nil && i.handlers.OnAxisRelativeDirection == nil) && drain == nil {
 			return
 		}
 		e := &PointerAxisRelativeDirectionEvent{}
@@ -5747,7 +5973,11 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Direction = PointerAxisRelativeDirection(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnAxisRelativeDirection(e)
+		if i.handlers != nil && i.handlers.OnAxisRelativeDirection != nil {
+			i.handlers.OnAxisRelativeDirection(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -5915,8 +6145,11 @@ func (e KeyboardKeyState) String() string {
 //	the recipient, as MAP_SHARED may fail.
 type KeyboardKeymapEvent struct {
 	proxy runtime.Proxy
+	// Format keymap format
 	Format KeyboardKeymapFormat
+	// Fd keymap file descriptor
 	Fd int
+	// Size keymap size, in bytes
 	Size uint32
 }
 
@@ -5941,8 +6174,11 @@ func (e *KeyboardKeymapEvent) Proxy() runtime.Proxy {
 //	events. The order of keys in the list is unspecified.
 type KeyboardEnterEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the enter event
 	Serial uint32
+	// Surface surface gaining keyboard focus
 	Surface *WlSurface
+	// Keys the keys currently logically down
 	Keys []byte
 }
 
@@ -5964,7 +6200,9 @@ func (e *KeyboardEnterEvent) Proxy() runtime.Proxy {
 //	before this event.
 type KeyboardLeaveEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the leave event
 	Serial uint32
+	// Surface surface that lost keyboard focus
 	Surface *WlSurface
 }
 
@@ -5999,9 +6237,13 @@ func (e *KeyboardLeaveEvent) Proxy() runtime.Proxy {
 //	responsibility of key repetition.
 type KeyboardKeyEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the key event
 	Serial uint32
+	// Time timestamp with millisecond granularity
 	Time uint32
+	// Key key that produced the event
 	Key uint32
+	// State physical state of the key
 	State KeyboardKeyState
 }
 
@@ -6026,10 +6268,15 @@ func (e *KeyboardKeyEvent) Proxy() runtime.Proxy {
 //	group.
 type KeyboardModifiersEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the modifiers event
 	Serial uint32
+	// ModsDepressed depressed modifiers
 	ModsDepressed uint32
+	// ModsLatched latched modifiers
 	ModsLatched uint32
+	// ModsLocked locked modifiers
 	ModsLocked uint32
+	// Group keyboard layout
 	Group uint32
 }
 
@@ -6053,20 +6300,22 @@ func (e *KeyboardModifiersEvent) Proxy() runtime.Proxy {
 //	of wl_keyboard.
 type KeyboardRepeatInfoEvent struct {
 	proxy runtime.Proxy
+	// Rate the rate of repeating keys in characters per second
 	Rate int32
+	// Delay delay in milliseconds since key down until repeating starts
 	Delay int32
 }
 
 func (e *KeyboardRepeatInfoEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnKeymap == nil {
+		if (i.handlers != nil && i.handlers.OnKeymap == nil) && drain == nil {
 			if fd != -1 {
 				syscall.Close(fd)
 			}
@@ -6080,9 +6329,13 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) {
 		e.Fd = fd
 		e.Size = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnKeymap(e)
+		if i.handlers != nil && i.handlers.OnKeymap != nil {
+			i.handlers.OnKeymap(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnEnter == nil {
+		if (i.handlers != nil && i.handlers.OnEnter == nil) && drain == nil {
 			return
 		}
 		e := &KeyboardEnterEvent{}
@@ -6097,9 +6350,13 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) {
 		e.Keys = make([]byte, keysLen)
 		copy(e.Keys, data[l:l+keysLen])
 		l += keysLen
-		i.handlers.OnEnter(e)
+		if i.handlers != nil && i.handlers.OnEnter != nil {
+			i.handlers.OnEnter(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnLeave == nil {
+		if (i.handlers != nil && i.handlers.OnLeave == nil) && drain == nil {
 			return
 		}
 		e := &KeyboardLeaveEvent{}
@@ -6109,9 +6366,13 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
 		l += 4
-		i.handlers.OnLeave(e)
+		if i.handlers != nil && i.handlers.OnLeave != nil {
+			i.handlers.OnLeave(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 3:
-		if i.handlers.OnKey == nil {
+		if (i.handlers != nil && i.handlers.OnKey == nil) && drain == nil {
 			return
 		}
 		e := &KeyboardKeyEvent{}
@@ -6125,9 +6386,13 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.State = KeyboardKeyState(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnKey(e)
+		if i.handlers != nil && i.handlers.OnKey != nil {
+			i.handlers.OnKey(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 4:
-		if i.handlers.OnModifiers == nil {
+		if (i.handlers != nil && i.handlers.OnModifiers == nil) && drain == nil {
 			return
 		}
 		e := &KeyboardModifiersEvent{}
@@ -6143,9 +6408,13 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Group = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnModifiers(e)
+		if i.handlers != nil && i.handlers.OnModifiers != nil {
+			i.handlers.OnModifiers(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 5:
-		if i.handlers.OnRepeatInfo == nil {
+		if (i.handlers != nil && i.handlers.OnRepeatInfo == nil) && drain == nil {
 			return
 		}
 		e := &KeyboardRepeatInfoEvent{}
@@ -6155,7 +6424,11 @@ func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Delay = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnRepeatInfo(e)
+		if i.handlers != nil && i.handlers.OnRepeatInfo != nil {
+			i.handlers.OnRepeatInfo(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -6227,11 +6500,17 @@ func (i *Touch) Release() {
 //	reused in the future.
 type TouchDownEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the touch down event
 	Serial uint32
+	// Time timestamp with millisecond granularity
 	Time uint32
+	// Surface surface touched
 	Surface *WlSurface
+	// Id the unique ID of this touch point
 	Id int32
+	// X surface-local x coordinate
 	X float64
+	// Y surface-local y coordinate
 	Y float64
 }
 
@@ -6246,8 +6525,11 @@ func (e *TouchDownEvent) Proxy() runtime.Proxy {
 //	reused in a future touch down event.
 type TouchUpEvent struct {
 	proxy runtime.Proxy
+	// Serial serial number of the touch up event
 	Serial uint32
+	// Time timestamp with millisecond granularity
 	Time uint32
+	// Id the unique ID of this touch point
 	Id int32
 }
 
@@ -6260,9 +6542,13 @@ func (e *TouchUpEvent) Proxy() runtime.Proxy {
 //	A touch point has changed coordinates.
 type TouchMotionEvent struct {
 	proxy runtime.Proxy
+	// Time timestamp with millisecond granularity
 	Time uint32
+	// Id the unique ID of this touch point
 	Id int32
+	// X surface-local x coordinate
 	X float64
+	// Y surface-local y coordinate
 	Y float64
 }
 
@@ -6335,8 +6621,11 @@ func (e *TouchCancelEvent) Proxy() runtime.Proxy {
 //	shape if it did not receive this event.
 type TouchShapeEvent struct {
 	proxy runtime.Proxy
+	// Id the unique ID of this touch point
 	Id int32
+	// Major length of the major axis in surface-local coordinates
 	Major float64
+	// Minor length of the minor axis in surface-local coordinates
 	Minor float64
 }
 
@@ -6371,20 +6660,22 @@ func (e *TouchShapeEvent) Proxy() runtime.Proxy {
 //	orientation reports.
 type TouchOrientationEvent struct {
 	proxy runtime.Proxy
+	// Id the unique ID of this touch point
 	Id int32
+	// Orientation angle between major axis and positive surface y-axis in degrees
 	Orientation float64
 }
 
 func (e *TouchOrientationEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Touch) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnDown == nil {
+		if (i.handlers != nil && i.handlers.OnDown == nil) && drain == nil {
 			return
 		}
 		e := &TouchDownEvent{}
@@ -6402,9 +6693,13 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Y = runtime.Fixed(data[l : l+4])
 		l += 4
-		i.handlers.OnDown(e)
+		if i.handlers != nil && i.handlers.OnDown != nil {
+			i.handlers.OnDown(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnUp == nil {
+		if (i.handlers != nil && i.handlers.OnUp == nil) && drain == nil {
 			return
 		}
 		e := &TouchUpEvent{}
@@ -6416,9 +6711,13 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Id = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnUp(e)
+		if i.handlers != nil && i.handlers.OnUp != nil {
+			i.handlers.OnUp(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnMotion == nil {
+		if (i.handlers != nil && i.handlers.OnMotion == nil) && drain == nil {
 			return
 		}
 		e := &TouchMotionEvent{}
@@ -6432,23 +6731,35 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Y = runtime.Fixed(data[l : l+4])
 		l += 4
-		i.handlers.OnMotion(e)
+		if i.handlers != nil && i.handlers.OnMotion != nil {
+			i.handlers.OnMotion(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 3:
-		if i.handlers.OnFrame == nil {
+		if (i.handlers != nil && i.handlers.OnFrame == nil) && drain == nil {
 			return
 		}
 		e := &TouchFrameEvent{}
 		e.proxy = i
-		i.handlers.OnFrame(e)
+		if i.handlers != nil && i.handlers.OnFrame != nil {
+			i.handlers.OnFrame(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 4:
-		if i.handlers.OnCancel == nil {
+		if (i.handlers != nil && i.handlers.OnCancel == nil) && drain == nil {
 			return
 		}
 		e := &TouchCancelEvent{}
 		e.proxy = i
-		i.handlers.OnCancel(e)
+		if i.handlers != nil && i.handlers.OnCancel != nil {
+			i.handlers.OnCancel(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 5:
-		if i.handlers.OnShape == nil {
+		if (i.handlers != nil && i.handlers.OnShape == nil) && drain == nil {
 			return
 		}
 		e := &TouchShapeEvent{}
@@ -6460,9 +6771,13 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Minor = runtime.Fixed(data[l : l+4])
 		l += 4
-		i.handlers.OnShape(e)
+		if i.handlers != nil && i.handlers.OnShape != nil {
+			i.handlers.OnShape(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 6:
-		if i.handlers.OnOrientation == nil {
+		if (i.handlers != nil && i.handlers.OnOrientation == nil) && drain == nil {
 			return
 		}
 		e := &TouchOrientationEvent{}
@@ -6472,7 +6787,11 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Orientation = runtime.Fixed(data[l : l+4])
 		l += 4
-		i.handlers.OnOrientation(e)
+		if i.handlers != nil && i.handlers.OnOrientation != nil {
+			i.handlers.OnOrientation(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -6737,13 +7056,21 @@ func (e OutputMode) String() string {
 //	clients should use name and description.
 type OutputGeometryEvent struct {
 	proxy runtime.Proxy
+	// X x position within the global compositor space
 	X int32
+	// Y y position within the global compositor space
 	Y int32
+	// PhysicalWidth width in millimeters of the output
 	PhysicalWidth int32
+	// PhysicalHeight height in millimeters of the output
 	PhysicalHeight int32
+	// Subpixel subpixel orientation of the output
 	Subpixel int32
+	// Make textual description of the manufacturer
 	Make string
+	// Model textual description of the model
 	Model string
+	// Transform additional transformation applied to buffer contents during presentation
 	Transform int32
 }
 
@@ -6788,9 +7115,13 @@ func (e *OutputGeometryEvent) Proxy() runtime.Proxy {
 //	refresh rate or the size.
 type OutputModeEvent struct {
 	proxy runtime.Proxy
+	// Flags bitfield of mode flags
 	Flags OutputMode
+	// Width width of the mode in hardware units
 	Width int32
+	// Height height of the mode in hardware units
 	Height int32
+	// Refresh vertical refresh rate in mHz
 	Refresh int32
 }
 
@@ -6835,6 +7166,7 @@ func (e *OutputDoneEvent) Proxy() runtime.Proxy {
 //	The scale event will be followed by a done event.
 type OutputScaleEvent struct {
 	proxy runtime.Proxy
+	// Factor scaling factor of output
 	Factor int32
 }
 
@@ -6874,6 +7206,7 @@ func (e *OutputScaleEvent) Proxy() runtime.Proxy {
 //	The name event will be followed by a done event.
 type OutputNameEvent struct {
 	proxy runtime.Proxy
+	// Name output name
 	Name string
 }
 
@@ -6899,19 +7232,20 @@ func (e *OutputNameEvent) Proxy() runtime.Proxy {
 //	The description event will be followed by a done event.
 type OutputDescriptionEvent struct {
 	proxy runtime.Proxy
+	// Description output description
 	Description string
 }
 
 func (e *OutputDescriptionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Output) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Output) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnGeometry == nil {
+		if (i.handlers != nil && i.handlers.OnGeometry == nil) && drain == nil {
 			return
 		}
 		e := &OutputGeometryEvent{}
@@ -6937,9 +7271,13 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) {
 		l += modelLen
 		e.Transform = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnGeometry(e)
+		if i.handlers != nil && i.handlers.OnGeometry != nil {
+			i.handlers.OnGeometry(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnMode == nil {
+		if (i.handlers != nil && i.handlers.OnMode == nil) && drain == nil {
 			return
 		}
 		e := &OutputModeEvent{}
@@ -6953,16 +7291,24 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Refresh = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnMode(e)
+		if i.handlers != nil && i.handlers.OnMode != nil {
+			i.handlers.OnMode(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnDone == nil {
+		if (i.handlers != nil && i.handlers.OnDone == nil) && drain == nil {
 			return
 		}
 		e := &OutputDoneEvent{}
 		e.proxy = i
-		i.handlers.OnDone(e)
+		if i.handlers != nil && i.handlers.OnDone != nil {
+			i.handlers.OnDone(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 3:
-		if i.handlers.OnScale == nil {
+		if (i.handlers != nil && i.handlers.OnScale == nil) && drain == nil {
 			return
 		}
 		e := &OutputScaleEvent{}
@@ -6970,9 +7316,13 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Factor = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnScale(e)
+		if i.handlers != nil && i.handlers.OnScale != nil {
+			i.handlers.OnScale(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 4:
-		if i.handlers.OnName == nil {
+		if (i.handlers != nil && i.handlers.OnName == nil) && drain == nil {
 			return
 		}
 		e := &OutputNameEvent{}
@@ -6982,9 +7332,13 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Name = runtime.String(data[l : l+nameLen])
 		l += nameLen
-		i.handlers.OnName(e)
+		if i.handlers != nil && i.handlers.OnName != nil {
+			i.handlers.OnName(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 5:
-		if i.handlers.OnDescription == nil {
+		if (i.handlers != nil && i.handlers.OnDescription == nil) && drain == nil {
 			return
 		}
 		e := &OutputDescriptionEvent{}
@@ -6994,7 +7348,11 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Description = runtime.String(data[l : l+descriptionLen])
 		l += descriptionLen
-		i.handlers.OnDescription(e)
+		if i.handlers != nil && i.handlers.OnDescription != nil {
+			i.handlers.OnDescription(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -7106,7 +7464,7 @@ func (i *Region) Subtract(x int32, y int32, width int32, height int32) {
 	}
 	return
 }
-func (i *Region) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *Region) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 
 // Subcompositor: sub-surface compositing
@@ -7267,7 +7625,7 @@ func (e SubcompositorError) Value() string {
 func (e SubcompositorError) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *Subcompositor) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *Subcompositor) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 
 // Subsurface: sub-surface interface to a wl_surface
@@ -7605,7 +7963,7 @@ func (e SubsurfaceError) Value() string {
 func (e SubsurfaceError) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *Subsurface) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *Subsurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 
 // Fixes: wayland protocol fixes
@@ -7677,7 +8035,7 @@ func (i *Fixes) DestroyRegistry(registry *Registry) {
 	}
 	return
 }
-func (i *Fixes) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *Fixes) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 func GetWaylandInterface(name string) runtime.Proxy {
 	switch name {

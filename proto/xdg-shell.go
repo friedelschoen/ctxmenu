@@ -255,19 +255,20 @@ func (e WmBaseError) String() string {
 //	always respond to any xdg_wm_base object it created.
 type WmBasePingEvent struct {
 	proxy runtime.Proxy
+	// Serial pass this to the pong request
 	Serial uint32
 }
 
 func (e *WmBasePingEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *WmBase) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *WmBase) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnPing == nil {
+		if (i.handlers != nil && i.handlers.OnPing == nil) && drain == nil {
 			return
 		}
 		e := &WmBasePingEvent{}
@@ -275,7 +276,11 @@ func (i *WmBase) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnPing(e)
+		if i.handlers != nil && i.handlers.OnPing != nil {
+			i.handlers.OnPing(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -864,7 +869,7 @@ func (e PositionerConstraintAdjustment) Value() string {
 func (e PositionerConstraintAdjustment) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *Positioner) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *Positioner) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 
 // XdgSurface: desktop user interface surface base interface
@@ -1266,19 +1271,20 @@ func (e XdgSurfaceError) String() string {
 //	to one, it is free to discard all but the last event it received.
 type XdgSurfaceConfigureEvent struct {
 	proxy runtime.Proxy
+	// Serial serial of the configure event
 	Serial uint32
 }
 
 func (e *XdgSurfaceConfigureEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *XdgSurface) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *XdgSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnConfigure == nil {
+		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
 			return
 		}
 		e := &XdgSurfaceConfigureEvent{}
@@ -1286,7 +1292,11 @@ func (i *XdgSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Serial = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnConfigure(e)
+		if i.handlers != nil && i.handlers.OnConfigure != nil {
+			i.handlers.OnConfigure(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -2276,19 +2286,20 @@ func (e *ToplevelConfigureBoundsEvent) Proxy() runtime.Proxy {
 //	native endianness.
 type ToplevelWmCapabilitiesEvent struct {
 	proxy runtime.Proxy
+	// Capabilities array of 32-bit capabilities
 	Capabilities []byte
 }
 
 func (e *ToplevelWmCapabilitiesEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnConfigure == nil {
+		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
 			return
 		}
 		e := &ToplevelConfigureEvent{}
@@ -2303,16 +2314,24 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) {
 		e.States = make([]byte, statesLen)
 		copy(e.States, data[l:l+statesLen])
 		l += statesLen
-		i.handlers.OnConfigure(e)
+		if i.handlers != nil && i.handlers.OnConfigure != nil {
+			i.handlers.OnConfigure(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnClose == nil {
+		if (i.handlers != nil && i.handlers.OnClose == nil) && drain == nil {
 			return
 		}
 		e := &ToplevelCloseEvent{}
 		e.proxy = i
-		i.handlers.OnClose(e)
+		if i.handlers != nil && i.handlers.OnClose != nil {
+			i.handlers.OnClose(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnConfigureBounds == nil {
+		if (i.handlers != nil && i.handlers.OnConfigureBounds == nil) && drain == nil {
 			return
 		}
 		e := &ToplevelConfigureBoundsEvent{}
@@ -2322,9 +2341,13 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnConfigureBounds(e)
+		if i.handlers != nil && i.handlers.OnConfigureBounds != nil {
+			i.handlers.OnConfigureBounds(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 3:
-		if i.handlers.OnWmCapabilities == nil {
+		if (i.handlers != nil && i.handlers.OnWmCapabilities == nil) && drain == nil {
 			return
 		}
 		e := &ToplevelWmCapabilitiesEvent{}
@@ -2335,7 +2358,11 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte) {
 		e.Capabilities = make([]byte, capabilitiesLen)
 		copy(e.Capabilities, data[l:l+capabilitiesLen])
 		l += capabilitiesLen
-		i.handlers.OnWmCapabilities(e)
+		if i.handlers != nil && i.handlers.OnWmCapabilities != nil {
+			i.handlers.OnWmCapabilities(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 
@@ -2586,9 +2613,13 @@ func (e PopupError) String() string {
 //	set_reactive requested, or in response to xdg_popup.reposition requests.
 type PopupConfigureEvent struct {
 	proxy runtime.Proxy
+	// X x position relative to parent surface window geometry
 	X int32
+	// Y y position relative to parent surface window geometry
 	Y int32
+	// Width window geometry width
 	Width int32
+	// Height window geometry height
 	Height int32
 }
 
@@ -2628,19 +2659,20 @@ func (e *PopupPopupDoneEvent) Proxy() runtime.Proxy {
 //	effect. See xdg_surface.ack_configure for details.
 type PopupRepositionedEvent struct {
 	proxy runtime.Proxy
+	// Token reposition request token
 	Token uint32
 }
 
 func (e *PopupRepositionedEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Popup) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *Popup) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnConfigure == nil {
+		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
 			return
 		}
 		e := &PopupConfigureEvent{}
@@ -2654,16 +2686,24 @@ func (i *Popup) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Height = int32(runtime.Uint32(data[l : l+4]))
 		l += 4
-		i.handlers.OnConfigure(e)
+		if i.handlers != nil && i.handlers.OnConfigure != nil {
+			i.handlers.OnConfigure(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnPopupDone == nil {
+		if (i.handlers != nil && i.handlers.OnPopupDone == nil) && drain == nil {
 			return
 		}
 		e := &PopupPopupDoneEvent{}
 		e.proxy = i
-		i.handlers.OnPopupDone(e)
+		if i.handlers != nil && i.handlers.OnPopupDone != nil {
+			i.handlers.OnPopupDone(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 2:
-		if i.handlers.OnRepositioned == nil {
+		if (i.handlers != nil && i.handlers.OnRepositioned == nil) && drain == nil {
 			return
 		}
 		e := &PopupRepositionedEvent{}
@@ -2671,7 +2711,11 @@ func (i *Popup) Dispatch(opcode uint32, fd int, data []byte) {
 		l := 0
 		e.Token = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnRepositioned(e)
+		if i.handlers != nil && i.handlers.OnRepositioned != nil {
+			i.handlers.OnRepositioned(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 func GetShellInterface(name string) runtime.Proxy {

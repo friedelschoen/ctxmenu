@@ -196,10 +196,7 @@ func (menu *Menu[T]) updateWindow() error {
 		draw.Draw(menu.surf, menu.surf.Rect, image.Black, image.Point{}, draw.Over)
 
 		// Create a wl_surface for toplevel menudow
-		menu.surface = menu.ctxmenu.compositor.CreateSurface(&proto.WlSurfaceHandlers{
-			OnEnter: menu.ctxmenu.pushEvent,
-			OnLeave: menu.ctxmenu.pushEvent,
-		})
+		menu.surface = menu.ctxmenu.compositor.CreateSurface(nil)
 
 		// zwlr_layer_shell_v1.get_layer_surface(surface, output, layer, namespace)
 		menu.layersurface = menu.ctxmenu.layerShell.GetLayerSurface(menu.surface, nil, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
@@ -214,12 +211,14 @@ func (menu *Menu[T]) updateWindow() error {
 				menu.drawFrame()
 				menu.surface.Commit()
 			},
-			OnClosed: menu.ctxmenu.pushEvent,
 		})
+
 		menu.layersurface.SetKeyboardInteractivity(proto.LayerSurfaceKeyboardInteractivityOnDemand)
 
 		// Typical “popup” anchoring: top-left (change as you like)
 		menu.layersurface.SetAnchor(proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorLeft)
+
+		menu.layersurface.SetMargin(int32(menu.x), 0, 0, int32(menu.y))
 
 		// Desired size — compositor may override via configure.
 		// If you want the surface to size to your buffer, set 0,0 here; otherwise set a hint.
@@ -234,6 +233,9 @@ func (menu *Menu[T]) updateWindow() error {
 
 		menu.openFile()
 	} else {
+		menu.layersurface.SetMargin(int32(menu.x), 0, 0, int32(menu.y))
+
+		menu.surface.Commit()
 		// TODO:
 		// menu.win.SetSize(int32(menu.w), int32(menu.h))
 		// menu.win.SetPosition(int32(menu.x), int32(menu.y))
@@ -333,13 +335,13 @@ func (menu *Menu[T]) hideChildren(except *Menu[T]) {
 
 func (menu *Menu[T]) hide() {
 	menu.hideChildren(nil)
-	if menu.surface != nil {
-		menu.surface.Destroy()
-		menu.surface = nil
-	}
 	if menu.layersurface != nil {
 		menu.layersurface.Destroy()
 		menu.layersurface = nil
+	}
+	if menu.surface != nil {
+		menu.surface.Destroy()
+		menu.surface = nil
 	}
 }
 
@@ -542,19 +544,22 @@ func (menu *Menu[T]) itemcycle(direction int) int {
 	switch direction {
 	case ItemNext:
 	case ItemFirst:
-		for ; item < len(menu.items) && menu.items[item].label == ""; item++ {
+		for item < len(menu.items) && menu.items[item].label == "" {
+			item++
 		}
 		if menu.items[item].label == "" {
 			item = 0
 		}
 	case ItemPrev:
 	case ItemLast:
-		for ; item >= 0 && menu.items[item].label == ""; item-- {
+		for item >= 0 && menu.items[item].label == "" {
+			item--
 		}
 		if menu.items[item].label == "" {
 			item = len(menu.items) - 1
 		}
 	}
+	fmt.Printf("cycle %d -> %d\n", menu.selected, item)
 	return item
 }
 
@@ -649,6 +654,10 @@ func (menu *Menu[T]) openFile() {
 }
 
 func (menu *Menu[T]) drawFrame() {
+	if menu.pool == nil {
+		return
+	}
+	menu.surface.Damage(0, 0, int32(menu.w), int32(menu.h))
 	buf := menu.pool.CreateBuffer(0, int32(menu.surf.Rect.Dx()), int32(menu.surf.Rect.Dy()), int32(menu.surf.Stride), proto.ShmFormatAbgr8888, &proto.BufferHandlers{
 		OnRelease: func(e wayland.Event) {
 			fmt.Println("released!")

@@ -233,7 +233,7 @@ func (e LayerShellLayer) Value() string {
 func (e LayerShellLayer) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *LayerShell) Dispatch(opcode uint32, fd int, data []byte) {
+func (i *LayerShell) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
 }
 
 // LayerSurface: layer metadata interface
@@ -781,13 +781,13 @@ type LayerSurfaceClosedEvent struct {
 func (e *LayerSurfaceClosedEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *LayerSurface) Dispatch(opcode uint32, fd int, data []byte) {
-	if i.handlers == nil {
+func (i *LayerSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+	if i.handlers == nil && drain == nil {
 		return
 	}
 	switch opcode {
 	case 0:
-		if i.handlers.OnConfigure == nil {
+		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
 			return
 		}
 		e := &LayerSurfaceConfigureEvent{}
@@ -799,14 +799,22 @@ func (i *LayerSurface) Dispatch(opcode uint32, fd int, data []byte) {
 		l += 4
 		e.Height = runtime.Uint32(data[l : l+4])
 		l += 4
-		i.handlers.OnConfigure(e)
+		if i.handlers != nil && i.handlers.OnConfigure != nil {
+			i.handlers.OnConfigure(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	case 1:
-		if i.handlers.OnClosed == nil {
+		if (i.handlers != nil && i.handlers.OnClosed == nil) && drain == nil {
 			return
 		}
 		e := &LayerSurfaceClosedEvent{}
 		e.proxy = i
-		i.handlers.OnClosed(e)
+		if i.handlers != nil && i.handlers.OnClosed != nil {
+			i.handlers.OnClosed(e)
+		} else if drain != nil {
+			drain <- e
+		}
 	}
 }
 func GetWlrLayerShellUnstableInterface(name string) runtime.Proxy {
