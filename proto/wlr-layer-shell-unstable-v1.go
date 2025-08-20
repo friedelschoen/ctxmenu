@@ -94,31 +94,17 @@ func (i *LayerShell) Name() string {
 func (i *LayerShell) GetLayerSurface(surface *WlSurface, output *Output, layer LayerShellLayer, namespace string, idHandlers *LayerSurfaceHandlers) *LayerSurface {
 	id := NewLayerSurface(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 0
-	namespaceLen := runtime.PaddedLen(len(namespace) + 1)
-	_reqBufLen := 28 + namespaceLen
-	_reqBuf := make([]byte, _reqBufLen)
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], surface.ID())
-	l += 4
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteObject(id)
+	w.WriteObject(surface)
 	if output == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], output.ID())
-		l += 4
+		w.WriteObject(output)
 	}
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(layer))
-	l += 4
-	runtime.PutString(_reqBuf[l:l+(4+namespaceLen)], namespace, namespaceLen)
-	l += (4 + namespaceLen)
-	if err := i.Conn().WriteMsg(_reqBuf, nil); err != nil {
+	w.WriteUint(uint32(layer))
+	w.WriteString(namespace)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -131,15 +117,8 @@ func (i *LayerShell) GetLayerSurface(surface *WlSurface, output *Output, layer L
 //	are not affected.
 func (i *LayerShell) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 1
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -233,7 +212,7 @@ func (e LayerShellLayer) Value() string {
 func (e LayerShellLayer) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *LayerShell) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *LayerShell) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 
 // LayerSurface: layer metadata interface
@@ -301,19 +280,10 @@ func (i *LayerSurface) Name() string {
 //
 //	Size is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetSize(width uint32, height uint32) {
-	const opcode = 0
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteUint(uint32(width))
+	w.WriteUint(uint32(height))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -329,17 +299,9 @@ func (i *LayerSurface) SetSize(width uint32, height uint32) {
 //
 //	Anchor is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetAnchor(anchor LayerSurfaceAnchor) {
-	const opcode = 1
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(anchor))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteUint(uint32(anchor))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -380,17 +342,9 @@ func (i *LayerSurface) SetAnchor(anchor LayerSurfaceAnchor) {
 //
 //	Exclusive zone is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetExclusiveZone(zone int32) {
-	const opcode = 2
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(zone))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteInt(zone)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -406,23 +360,12 @@ func (i *LayerSurface) SetExclusiveZone(zone int32) {
 //
 //	Margin is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetMargin(top int32, right int32, bottom int32, left int32) {
-	const opcode = 3
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(top))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(right))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(bottom))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(left))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	w.WriteInt(top)
+	w.WriteInt(right)
+	w.WriteInt(bottom)
+	w.WriteInt(left)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -443,17 +386,9 @@ func (i *LayerSurface) SetMargin(top int32, right int32, bottom int32, left int3
 //
 //	Keyboard interactivity is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetKeyboardInteractivity(keyboardInteractivity LayerSurfaceKeyboardInteractivity) {
-	const opcode = 4
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(keyboardInteractivity))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 4)
+	w.WriteUint(uint32(keyboardInteractivity))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -469,17 +404,9 @@ func (i *LayerSurface) SetKeyboardInteractivity(keyboardInteractivity LayerSurfa
 //	See the documentation of xdg_popup for more details about what an
 //	xdg_popup is and how it is used.
 func (i *LayerSurface) GetPopup(popup *Popup) {
-	const opcode = 5
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], popup.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 5)
+	w.WriteObject(popup)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -506,17 +433,9 @@ func (i *LayerSurface) GetPopup(popup *Popup) {
 //
 //	serial: the serial from the configure event
 func (i *LayerSurface) AckConfigure(serial uint32) {
-	const opcode = 6
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 6)
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -527,15 +446,8 @@ func (i *LayerSurface) AckConfigure(serial uint32) {
 //	This request destroys the layer surface.
 func (i *LayerSurface) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 7
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 7)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -550,17 +462,9 @@ func (i *LayerSurface) Destroy() {
 //
 //	layer: layer to move this surface to
 func (i *LayerSurface) SetLayer(layer LayerShellLayer) {
-	const opcode = 8
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(layer))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 8)
+	w.WriteUint(uint32(layer))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -577,17 +481,9 @@ func (i *LayerSurface) SetLayer(layer LayerShellLayer) {
 //	The edge must be one the surface is anchored to, otherwise the
 //	invalid_exclusive_edge protocol error will be raised.
 func (i *LayerSurface) SetExclusiveEdge(edge LayerSurfaceAnchor) {
-	const opcode = 9
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(edge))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 9)
+	w.WriteUint(uint32(edge))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -793,31 +689,28 @@ type LayerSurfaceClosedEvent struct {
 func (e *LayerSurfaceClosedEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *LayerSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *LayerSurface) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnConfigure == nil && drain == nil {
 			return
 		}
 		e := &LayerSurfaceConfigureEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.width = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.height = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.width = r.ReadUint()
+		e.height = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnClosed == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnClosed == nil && drain == nil {
 			return
 		}
 		e := &LayerSurfaceClosedEvent{}

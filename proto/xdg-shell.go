@@ -75,15 +75,8 @@ func (i *WmBase) Name() string {
 //	and will result in a defunct_surfaces error.
 func (i *WmBase) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -97,17 +90,9 @@ func (i *WmBase) Destroy() {
 func (i *WmBase) CreatePositioner(idHandlers *PositionerHandlers) *Positioner {
 	id := NewPositioner(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 1
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(id)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -131,19 +116,10 @@ func (i *WmBase) CreatePositioner(idHandlers *PositionerHandlers) *Positioner {
 func (i *WmBase) GetXdgSurface(surface *WlSurface, idHandlers *XdgSurfaceHandlers) *XdgSurface {
 	id := NewXdgSurface(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 2
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], surface.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteObject(id)
+	w.WriteObject(surface)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -158,17 +134,9 @@ func (i *WmBase) GetXdgSurface(surface *WlSurface, idHandlers *XdgSurfaceHandler
 //
 //	 serial: serial of the ping event
 func (i *WmBase) Pong(serial uint32) {
-	const opcode = 3
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -266,20 +234,19 @@ func (e *WmBasePingEvent) Serial() uint32 {
 func (e *WmBasePingEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *WmBase) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *WmBase) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnPing == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnPing == nil && drain == nil {
 			return
 		}
 		e := &WmBasePingEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnPing != nil {
 			i.handlers.OnPing(e)
 		} else if drain != nil {
@@ -349,15 +316,8 @@ func (i *Positioner) Name() string {
 //	Notify the compositor that the xdg_positioner will no longer be used.
 func (i *Positioner) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -375,19 +335,10 @@ func (i *Positioner) Destroy() {
 //	 width: width of positioned rectangle
 //	 height: height of positioned rectangle
 func (i *Positioner) SetSize(width int32, height int32) {
-	const opcode = 1
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -412,23 +363,12 @@ func (i *Positioner) SetSize(width int32, height int32) {
 //	 width: width of anchor rectangle
 //	 height: height of anchor rectangle
 func (i *Positioner) SetAnchorRect(x int32, y int32, width int32, height int32) {
-	const opcode = 2
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -446,17 +386,9 @@ func (i *Positioner) SetAnchorRect(x int32, y int32, width int32, height int32) 
 //
 //	 anchor: anchor
 func (i *Positioner) SetAnchor(anchor PositionerAnchor) {
-	const opcode = 3
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(anchor))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	w.WriteUint(uint32(anchor))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -475,17 +407,9 @@ func (i *Positioner) SetAnchor(anchor PositionerAnchor) {
 //
 //	 gravity: gravity direction
 func (i *Positioner) SetGravity(gravity PositionerGravity) {
-	const opcode = 4
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(gravity))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 4)
+	w.WriteUint(uint32(gravity))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -510,17 +434,9 @@ func (i *Positioner) SetGravity(gravity PositionerGravity) {
 //
 //	 constraintAdjustment: bit mask of constraint adjustments
 func (i *Positioner) SetConstraintAdjustment(constraintAdjustment PositionerConstraintAdjustment) {
-	const opcode = 5
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(constraintAdjustment))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 5)
+	w.WriteUint(uint32(constraintAdjustment))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -544,19 +460,10 @@ func (i *Positioner) SetConstraintAdjustment(constraintAdjustment PositionerCons
 //	 x: surface position x offset
 //	 y: surface position y offset
 func (i *Positioner) SetOffset(x int32, y int32) {
-	const opcode = 6
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 6)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -571,15 +478,8 @@ func (i *Positioner) SetOffset(x int32, y int32) {
 //	xdg_popup.configure event is sent with updated geometry, followed by an
 //	xdg_surface.configure event.
 func (i *Positioner) SetReactive() {
-	const opcode = 7
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 7)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -599,19 +499,10 @@ func (i *Positioner) SetReactive() {
 //	 parentWidth: future window geometry width of parent
 //	 parentHeight: future window geometry height of parent
 func (i *Positioner) SetParentSize(parentWidth int32, parentHeight int32) {
-	const opcode = 8
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(parentWidth))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(parentHeight))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 8)
+	w.WriteInt(parentWidth)
+	w.WriteInt(parentHeight)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -627,17 +518,9 @@ func (i *Positioner) SetParentSize(parentWidth int32, parentHeight int32) {
 //
 //	 serial: serial of parent configure event
 func (i *Positioner) SetParentConfigure(serial uint32) {
-	const opcode = 9
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 9)
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -873,7 +756,7 @@ func (e PositionerConstraintAdjustment) Value() string {
 func (e PositionerConstraintAdjustment) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *Positioner) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Positioner) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 
 // XdgSurface: desktop user interface surface base interface
@@ -1000,15 +883,8 @@ func (i *XdgSurface) Name() string {
 //	a defunct_role_object error is raised.
 func (i *XdgSurface) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1024,17 +900,9 @@ func (i *XdgSurface) Destroy() {
 func (i *XdgSurface) GetToplevel(idHandlers *ToplevelHandlers) *Toplevel {
 	id := NewToplevel(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 1
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(id)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -1053,26 +921,15 @@ func (i *XdgSurface) GetToplevel(idHandlers *ToplevelHandlers) *Toplevel {
 func (i *XdgSurface) GetPopup(parent *XdgSurface, positioner *Positioner, idHandlers *PopupHandlers) *Popup {
 	id := NewPopup(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 2
-	const _reqBufLen = 20
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteObject(id)
 	if parent == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], parent.ID())
-		l += 4
+		w.WriteObject(parent)
 	}
-	runtime.PutUint32(_reqBuf[l:l+4], positioner.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w.WriteObject(positioner)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -1121,23 +978,12 @@ func (i *XdgSurface) GetPopup(parent *XdgSurface, positioner *Positioner, idHand
 //	greater than zero. Setting an invalid size will raise an
 //	invalid_size error.
 func (i *XdgSurface) SetWindowGeometry(x int32, y int32, width int32, height int32) {
-	const opcode = 3
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1181,17 +1027,9 @@ func (i *XdgSurface) SetWindowGeometry(x int32, y int32, width int32, height int
 //
 //	 serial: the serial from the configure event
 func (i *XdgSurface) AckConfigure(serial uint32) {
-	const opcode = 4
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 4)
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1286,20 +1124,19 @@ func (e *XdgSurfaceConfigureEvent) Serial() uint32 {
 func (e *XdgSurfaceConfigureEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *XdgSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *XdgSurface) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnConfigure == nil && drain == nil {
 			return
 		}
 		e := &XdgSurfaceConfigureEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)
 		} else if drain != nil {
@@ -1380,15 +1217,8 @@ func (i *Toplevel) Name() string {
 //	see "Unmapping" behavior in interface section for details.
 func (i *Toplevel) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1417,22 +1247,13 @@ func (i *Toplevel) Destroy() {
 //	descendants, and the parent must be different from the child toplevel,
 //	otherwise the invalid_parent protocol error is raised.
 func (i *Toplevel) SetParent(parent *Toplevel) {
-	const opcode = 1
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
+	w := runtime.NewMessageWriter(i, 1)
 	if parent == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], parent.ID())
-		l += 4
+		w.WriteObject(parent)
 	}
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1448,18 +1269,9 @@ func (i *Toplevel) SetParent(parent *Toplevel) {
 //
 //	The string must be encoded in UTF-8.
 func (i *Toplevel) SetTitle(title string) {
-	const opcode = 2
-	titleLen := runtime.PaddedLen(len(title) + 1)
-	_reqBufLen := 12 + titleLen
-	_reqBuf := make([]byte, _reqBufLen)
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutString(_reqBuf[l:l+(4+titleLen)], title, titleLen)
-	l += (4 + titleLen)
-	if err := i.Conn().WriteMsg(_reqBuf, nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteString(title)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1491,18 +1303,9 @@ func (i *Toplevel) SetTitle(title string) {
 //
 //	[0] https://standards.freedesktop.org/desktop-entry-spec/
 func (i *Toplevel) SetAppId(appId string) {
-	const opcode = 3
-	appIdLen := runtime.PaddedLen(len(appId) + 1)
-	_reqBufLen := 12 + appIdLen
-	_reqBuf := make([]byte, _reqBufLen)
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutString(_reqBuf[l:l+(4+appIdLen)], appId, appIdLen)
-	l += (4 + appIdLen)
-	if err := i.Conn().WriteMsg(_reqBuf, nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	w.WriteString(appId)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1529,23 +1332,12 @@ func (i *Toplevel) SetAppId(appId string) {
 //	 x: the x position to pop up the window menu at
 //	 y: the y position to pop up the window menu at
 func (i *Toplevel) ShowWindowMenu(seat *Seat, serial uint32, x int32, y int32) {
-	const opcode = 4
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], seat.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 4)
+	w.WriteObject(seat)
+	w.WriteUint(uint32(serial))
+	w.WriteInt(x)
+	w.WriteInt(y)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1574,19 +1366,10 @@ func (i *Toplevel) ShowWindowMenu(seat *Seat, serial uint32, x int32, y int32) {
 //	 seat: the wl_seat of the user event
 //	 serial: the serial of the user event
 func (i *Toplevel) Move(seat *Seat, serial uint32) {
-	const opcode = 5
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], seat.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 5)
+	w.WriteObject(seat)
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1631,21 +1414,11 @@ func (i *Toplevel) Move(seat *Seat, serial uint32) {
 //	 serial: the serial of the user event
 //	 edges: which edge or corner is being dragged
 func (i *Toplevel) Resize(seat *Seat, serial uint32, edges ToplevelResizeEdge) {
-	const opcode = 6
-	const _reqBufLen = 20
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], seat.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(edges))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 6)
+	w.WriteObject(seat)
+	w.WriteUint(uint32(serial))
+	w.WriteUint(uint32(edges))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1687,19 +1460,10 @@ func (i *Toplevel) Resize(seat *Seat, serial uint32, edges ToplevelResizeEdge) {
 //	strictly negative values for width or height will result in a
 //	invalid_size error.
 func (i *Toplevel) SetMaxSize(width int32, height int32) {
-	const opcode = 7
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 7)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1741,19 +1505,10 @@ func (i *Toplevel) SetMaxSize(width int32, height int32) {
 //	strictly negative values for width and height will result in a
 //	invalid_size error.
 func (i *Toplevel) SetMinSize(width int32, height int32) {
-	const opcode = 8
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 8)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1781,15 +1536,8 @@ func (i *Toplevel) SetMinSize(width int32, height int32) {
 //	effect. It may alter the state the surface is returned to when
 //	unmaximized unless overridden by the compositor.
 func (i *Toplevel) SetMaximized() {
-	const opcode = 9
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 9)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1819,15 +1567,8 @@ func (i *Toplevel) SetMaximized() {
 //	effect. It may alter the state the surface is returned to when
 //	unmaximized unless overridden by the compositor.
 func (i *Toplevel) UnsetMaximized() {
-	const opcode = 10
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 10)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1859,22 +1600,13 @@ func (i *Toplevel) UnsetMaximized() {
 //	up of subsurfaces, popups or similarly coupled surfaces) are not
 //	visible below the fullscreened surface.
 func (i *Toplevel) SetFullscreen(output *Output) {
-	const opcode = 11
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
+	w := runtime.NewMessageWriter(i, 11)
 	if output == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], output.ID())
-		l += 4
+		w.WriteObject(output)
 	}
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1900,15 +1632,8 @@ func (i *Toplevel) SetFullscreen(output *Output) {
 //	The client must also acknowledge the configure when committing the new
 //	content (see ack_configure).
 func (i *Toplevel) UnsetFullscreen() {
-	const opcode = 12
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 12)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1925,15 +1650,8 @@ func (i *Toplevel) UnsetFullscreen() {
 //	also work with live previews on windows in Alt-Tab, Expose or
 //	similar compositor features.
 func (i *Toplevel) SetMinimized() {
-	const opcode = 13
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 13)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2325,34 +2043,28 @@ func (e *ToplevelWmCapabilitiesEvent) Capabilities() []byte {
 func (e *ToplevelWmCapabilitiesEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Toplevel) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnConfigure == nil && drain == nil {
 			return
 		}
 		e := &ToplevelConfigureEvent{}
 		e.proxy = i
-		l := 0
-		e.width = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.height = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		statesLen := int(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.states = make([]byte, statesLen)
-		copy(e.states, data[l:l+statesLen])
-		l += statesLen
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.width = r.ReadInt()
+		e.height = r.ReadInt()
+		e.states = r.ReadArray()
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnClose == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnClose == nil && drain == nil {
 			return
 		}
 		e := &ToplevelCloseEvent{}
@@ -2363,33 +2075,27 @@ func (i *Toplevel) Dispatch(opcode uint32, fd int, data []byte, drain chan<- run
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnConfigureBounds == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnConfigureBounds == nil && drain == nil {
 			return
 		}
 		e := &ToplevelConfigureBoundsEvent{}
 		e.proxy = i
-		l := 0
-		e.width = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.height = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.width = r.ReadInt()
+		e.height = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnConfigureBounds != nil {
 			i.handlers.OnConfigureBounds(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 3:
-		if (i.handlers != nil && i.handlers.OnWmCapabilities == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnWmCapabilities == nil && drain == nil {
 			return
 		}
 		e := &ToplevelWmCapabilitiesEvent{}
 		e.proxy = i
-		l := 0
-		capabilitiesLen := int(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.capabilities = make([]byte, capabilitiesLen)
-		copy(e.capabilities, data[l:l+capabilitiesLen])
-		l += capabilitiesLen
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.capabilities = r.ReadArray()
 		if i.handlers != nil && i.handlers.OnWmCapabilities != nil {
 			i.handlers.OnWmCapabilities(e)
 		} else if drain != nil {
@@ -2478,15 +2184,8 @@ func (i *Popup) Name() string {
 //	xdg_wm_base.not_the_topmost_popup protocol error will be sent.
 func (i *Popup) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2536,19 +2235,10 @@ func (i *Popup) Destroy() {
 //	 seat: the wl_seat of the user event
 //	 serial: the serial of the user event
 func (i *Popup) Grab(seat *Seat, serial uint32) {
-	const opcode = 1
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], seat.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(seat)
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2583,19 +2273,10 @@ func (i *Popup) Grab(seat *Seat, serial uint32) {
 //
 //	 token: reposition request token
 func (i *Popup) Reposition(positioner *Positioner, token uint32) {
-	const opcode = 2
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], positioner.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(token))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteObject(positioner)
+	w.WriteUint(uint32(token))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2718,33 +2399,29 @@ func (e *PopupRepositionedEvent) Token() uint32 {
 func (e *PopupRepositionedEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Popup) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Popup) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnConfigure == nil && drain == nil {
 			return
 		}
 		e := &PopupConfigureEvent{}
 		e.proxy = i
-		l := 0
-		e.x = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.y = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.width = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.height = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.x = r.ReadInt()
+		e.y = r.ReadInt()
+		e.width = r.ReadInt()
+		e.height = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnPopupDone == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnPopupDone == nil && drain == nil {
 			return
 		}
 		e := &PopupPopupDoneEvent{}
@@ -2755,14 +2432,13 @@ func (i *Popup) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnRepositioned == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnRepositioned == nil && drain == nil {
 			return
 		}
 		e := &PopupRepositionedEvent{}
 		e.proxy = i
-		l := 0
-		e.token = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.token = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnRepositioned != nil {
 			i.handlers.OnRepositioned(e)
 		} else if drain != nil {

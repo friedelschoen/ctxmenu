@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"syscall"
 	"time"
 	"unicode"
 
@@ -27,7 +26,6 @@ const (
 	ActionClear Action = 1 << iota /* clear text */
 	ActionMap                      /* remap menu windows */
 	ActionDraw                     /* redraw menu windows */
-	ActionWarp                     /* warp the pointer */
 )
 
 /* enum for keyboard menu navigation */
@@ -87,7 +85,6 @@ type ContextMenu struct {
 
 	seen bool /* if the cursor is seen above menu */
 
-	events     chan wayland.Event
 	conn       *wayland.Conn
 	display    *proto.Display
 	registry   *proto.Registry
@@ -259,28 +256,32 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 	}
 	rootmenu.draw()
 
+	/* event queue with a buffer of 64 */
+	events := make(chan wayland.Event, 64)
+	rootmenu.ctxmenu.conn.SetDrain(events)
+
 	curmenu := rootmenu
+	curmenu.show(nil)
 	var buf []byte
 	var previtem *Item[T]
 	// curmenu.selected := -1
 	var hasleft *time.Timer
 	var kb *xkb.Keyboard
-	warped := false
-	action := Action(0)
-	quit := make(chan struct{})
 	var curY int
-	for {
-		action = 0
-		event := <-rootmenu.ctxmenu.events
+	for event := range events {
+		var action Action
 		switch ev := event.(type) {
 		case QuitEvent:
 			return def, ErrExited
+		case *proto.DisplayErrorEvent:
+			return def, fmt.Errorf("display error event on %s: %s [%d]\n", ev.ObjectId().Name(), ev.Message(), ev.Code())
+
 		case *proto.WlSurfaceEnterEvent:
 			action = ActionDraw
 		case *proto.PointerLeaveEvent:
 			if rootmenu.ctxmenu.seen {
 				hasleft = time.AfterFunc(100*time.Millisecond, func() {
-					quit <- struct{}{}
+					events <- QuitEvent{}
 				})
 			}
 		case *proto.PointerEnterEvent:
@@ -289,43 +290,31 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 				hasleft = nil
 			}
 			curmenu = rootmenu.getmenu(ev.Surface().ID())
-			action = ActionDraw
 		case *proto.PointerMotionEvent:
 			curY = int(ev.SurfaceY())
-			if warped {
-				warped = false
-				break
-			}
-			menu := curmenu
-			if rootmenu.ctxmenu.seen && menu == nil {
-				return def, ErrExited
-			}
-			if menu == nil {
-				continue
-			}
-			itemidx := menu.getitem(curY)
+			itemidx := curmenu.getitem(curY)
 			if itemidx == -1 {
 				continue
 			}
-			item := menu.items[itemidx]
+			if itemidx == curmenu.selected {
+				continue
+			}
+			item := curmenu.items[itemidx]
 			if previtem == item {
 				continue
 			}
 			rootmenu.ctxmenu.seen = true
 			previtem = item
 			if item.label == "" {
-				menu.selected = -1
-			} else {
-				menu.selected = itemidx
-			}
-			menu.draw()
-			if item.submenu != nil {
-				curmenu = item.submenu
 				curmenu.selected = -1
 			} else {
-				curmenu = menu
+				curmenu.selected = itemidx
 			}
-			curmenu.show(menu)
+			curmenu.hideChildren(nil)
+			if item.submenu != nil {
+				item.submenu.show(curmenu)
+				item.submenu.draw()
+			}
 			if item.label != "" && hover != nil {
 				hover(item.output)
 			}
@@ -379,9 +368,6 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 			}
 			curmenu.selected = 0
 			action = ActionClear | ActionMap | ActionDraw
-			if ev.Button() == uint32(wayland.ButtonMiddle) {
-				action |= ActionWarp
-			}
 		case *proto.KeyboardKeymapEvent:
 			if ev.Format() != proto.KeyboardKeymapFormatXkbV1 {
 				log.Printf("unsupported keymap: %v\n", ev.Format())
@@ -391,12 +377,11 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 				kb.Close()
 				kb = nil
 			}
-			format, err := syscall.Mmap(ev.Fd(), 0, int(ev.Size()), syscall.PROT_READ, syscall.MAP_PRIVATE)
+			format, err := wayland.MapMemory(ev, wayland.ProtRead, wayland.MapPrivate)
 			if err != nil {
 				log.Fatalf("unable to create mapping: %v", err)
 				break
 			}
-			defer syscall.Munmap(format)
 			kb, err = xkb.NewFromKeymapText(format, "")
 			if err != nil {
 				log.Fatalf("unable to create mapping: %v", err)
@@ -415,7 +400,6 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 				log.Printf("unable to translate key: %v\n", err)
 				break
 			}
-			fmt.Printf("key: %s [%c], composed: %v\n", key.Name, key.Char, key.Composed)
 
 			/* esc closes ctxmenu when current menu is the root menu */
 			if key.Sym == xkb.K_Escape && curmenu.caller == nil {
@@ -504,11 +488,8 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 		if action&ActionDraw != 0 {
 			curmenu.draw()
 		}
-		if action&ActionWarp != 0 {
-			curmenu.warp()
-			warped = true
-		}
 	}
+	return def, ErrExited
 }
 
 func (ctxmenu *ContextMenu) getPointer() {
@@ -561,17 +542,8 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 		log.Fatalf("unable to connect to wayland server: %v", err)
 	}
 
-	/* event queue with a buffer of 64 */
-	ctxmenu.events = make(chan wayland.Event, 64)
-	ctxmenu.conn.SetDrain(ctxmenu.events)
-
 	// Connect to wayland server
-	ctxmenu.display = proto.NewDisplay(&proto.DisplayHandlers{
-		OnError: func(evt wayland.Event) {
-			e := evt.(*proto.DisplayErrorEvent)
-			log.Fatalf("display error event on %s: [%d] %s\n", e.ObjectId().Name(), e.Code(), e.Message())
-		},
-	})
+	ctxmenu.display = proto.NewDisplay(nil)
 	/* manually registing display */
 	ctxmenu.conn.Register(ctxmenu.display)
 
@@ -609,7 +581,8 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 			ctxmenu.monSize = image.Point{int(e.Width()), int(e.Height())}
 		},
 	})
-	reg := wayland.Registrar{ctxmenu.compositor, ctxmenu.shm, ctxmenu.seat, ctxmenu.layerShell, ctxmenu.output}
+	reg := wayland.Registrar{}
+	reg.Add(ctxmenu.compositor, ctxmenu.shm, ctxmenu.seat, ctxmenu.layerShell, ctxmenu.output)
 
 	// Get global interfaces registry
 	ctxmenu.registry = ctxmenu.display.GetRegistry(&proto.RegistryHandlers{

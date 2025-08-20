@@ -16,13 +16,12 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/KononK/resize"
 	"github.com/friedelschoen/ctxmenu/proto"
 	"github.com/friedelschoen/wayland"
-	"github.com/veandco/go-sdl2/sdl"
+	xdraw "golang.org/x/image/draw"
 )
 
-var ErrExited = errors.New("window was closed")
+var ErrExited = errors.New("quit-request received")
 
 type OverflowItem int
 
@@ -39,7 +38,7 @@ type Item[T comparable] struct {
 	label      string   /* string to be drawed on menu */
 	labeltex   draw.Image
 	submenu    *Menu[T] /* submenu spawned by clicking on item */
-	icon       image.Image
+	icon       draw.Image
 	overflower OverflowItem
 
 	w, h int /* item geometry */
@@ -153,7 +152,11 @@ func (menu *Menu[T]) makeItem(label string, output T, imagefile string) (*Item[T
 			return nil, err
 		}
 
-		item.icon = resize.Resize(uint(menu.ctxmenu.IconSize), uint(menu.ctxmenu.IconSize), img, resize.Bilinear)
+		dst := image.NewRGBA(image.Rect(0, 0, menu.ctxmenu.IconSize, menu.ctxmenu.IconSize))
+		item.icon = dst
+
+		// Ugh, NearestNeighbor is ugly... but really fast and suits the case as I want to create small 30x30 (or so) icons
+		xdraw.NearestNeighbor.Scale(dst, dst.Rect, img, img.Bounds(), draw.Over, nil)
 		item.w += menu.ctxmenu.IconSize + menu.ctxmenu.PaddingX
 		item.h = max(item.h, menu.ctxmenu.IconSize+menu.ctxmenu.PaddingY*2)
 	}
@@ -207,7 +210,6 @@ func (menu *Menu[T]) updateWindow() error {
 				menu.layersurface.AckConfigure(e.Serial())
 
 				// If compositor provides width/height > 0, you can resize your buffer here.
-				// For now we just attach whatever frame we have.
 				menu.drawFrame()
 				menu.surface.Commit()
 			},
@@ -218,7 +220,7 @@ func (menu *Menu[T]) updateWindow() error {
 		// Typical “popup” anchoring: top-left (change as you like)
 		menu.layersurface.SetAnchor(proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorLeft)
 
-		menu.layersurface.SetMargin(int32(menu.x), 0, 0, int32(menu.y))
+		menu.layersurface.SetMargin(int32(menu.y), 0, 0, int32(menu.x))
 
 		// Desired size — compositor may override via configure.
 		// If you want the surface to size to your buffer, set 0,0 here; otherwise set a hint.
@@ -231,9 +233,11 @@ func (menu *Menu[T]) updateWindow() error {
 		// Commit the state changes (title & appID) to the server
 		menu.surface.Commit()
 
+		menu.ctxmenu.sync()
+
 		menu.openFile()
 	} else {
-		menu.layersurface.SetMargin(int32(menu.x), 0, 0, int32(menu.y))
+		menu.layersurface.SetMargin(int32(menu.y), 0, 0, int32(menu.x))
 
 		menu.surface.Commit()
 		// TODO:
@@ -451,7 +455,6 @@ func (menu *Menu[T]) draw() {
 
 	/* right */
 	draw.Draw(menu.surf, image.Rect(menu.w-bw, 0, menu.w, menu.h), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
-	fmt.Printf("here %p\n", menu.surf)
 	menu.drawFrame()
 	menu.surface.Commit()
 }
@@ -559,7 +562,6 @@ func (menu *Menu[T]) itemcycle(direction int) int {
 			item = len(menu.items) - 1
 		}
 	}
-	fmt.Printf("cycle %d -> %d\n", menu.selected, item)
 	return item
 }
 
@@ -615,20 +617,6 @@ func (menu *Menu[T]) matchitem(text string, dir int) int {
 	return -1
 }
 
-func (menu *Menu[T]) warp() bool {
-	y := menu.ctxmenu.BorderSize
-	for i, item := range menu.visibleItems(true) {
-		if i != -1 && i == menu.selected {
-			y += menu.y + item.h/2
-			x := menu.x + menu.w/2
-			sdl.WarpMouseGlobal(int32(x), int32(y))
-			return true
-		}
-		y += item.h
-	}
-	return false
-}
-
 func (menu *Menu[T]) openFile() {
 	if menu.surf == nil {
 		return
@@ -643,12 +631,10 @@ func (menu *Menu[T]) openFile() {
 	}
 	// defer file.Close()
 
-	fmt.Printf("before: %p\n", menu.surf.Pix)
 	menu.surf.Pix, err = syscall.Mmap(int(menu.file.Fd()), 0, size, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
 	if err != nil {
 		log.Fatalf("unable to create mapping: %v", err)
 	}
-	fmt.Printf("after: %p\n", menu.surf.Pix)
 
 	menu.pool = menu.ctxmenu.shm.CreatePool(int(menu.file.Fd()), int32(size), nil)
 }
@@ -660,7 +646,6 @@ func (menu *Menu[T]) drawFrame() {
 	menu.surface.Damage(0, 0, int32(menu.w), int32(menu.h))
 	buf := menu.pool.CreateBuffer(0, int32(menu.surf.Rect.Dx()), int32(menu.surf.Rect.Dy()), int32(menu.surf.Stride), proto.ShmFormatAbgr8888, &proto.BufferHandlers{
 		OnRelease: func(e wayland.Event) {
-			fmt.Println("released!")
 			e.Proxy().(*proto.Buffer).Destroy()
 		},
 	})

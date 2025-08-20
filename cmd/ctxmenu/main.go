@@ -8,12 +8,9 @@ import (
 	"strings"
 
 	"github.com/friedelschoen/ctxmenu"
-	"github.com/veandco/go-sdl2/sdl"
 )
 
 func main() {
-	sdl.VideoInit("")
-
 	xmenu, err := ctxmenu.CtxMenuInit(ctxmenu.Config{
 		/* font, separate different fonts with comma */
 		FontName: "monospace:size=12",
@@ -94,7 +91,7 @@ func main() {
 	res, err := ctxmenu.Run(rootmenu, func(s string) {
 		fmt.Printf("\t%s\n", s)
 	})
-	if err != nil {
+	if err == nil {
 		fmt.Printf("%s\n", res)
 	}
 }

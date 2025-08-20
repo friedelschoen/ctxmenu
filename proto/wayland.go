@@ -77,17 +77,9 @@ func (i *Display) Name() string {
 func (i *Display) Sync(callbackHandlers *CallbackHandlers) *Callback {
 	callback := NewCallback(callbackHandlers)
 	i.Conn().Register(callback)
-	const opcode = 0
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], callback.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteObject(callback)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return callback
@@ -107,17 +99,9 @@ func (i *Display) Sync(callbackHandlers *CallbackHandlers) *Callback {
 func (i *Display) GetRegistry(registryHandlers *RegistryHandlers) *Registry {
 	registry := NewRegistry(registryHandlers)
 	i.Conn().Register(registry)
-	const opcode = 1
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], registry.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(registry)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return registry
@@ -231,40 +215,34 @@ func (e *DisplayDeleteIdEvent) Id() uint32 {
 func (e *DisplayDeleteIdEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Display) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Display) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnError == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnError == nil && drain == nil {
 			return
 		}
 		e := &DisplayErrorEvent{}
 		e.proxy = i
-		l := 0
-		e.objectId = i.Conn().GetProxy(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.code = runtime.Uint32(data[l : l+4])
-		l += 4
-		messageLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e.message = runtime.String(data[l : l+messageLen])
-		l += messageLen
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.objectId = r.ReadObject()
+		e.code = r.ReadUint()
+		e.message = r.ReadString()
 		if i.handlers != nil && i.handlers.OnError != nil {
 			i.handlers.OnError(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnDeleteId == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnDeleteId == nil && drain == nil {
 			return
 		}
 		e := &DisplayDeleteIdEvent{}
 		e.proxy = i
-		l := 0
-		e.id = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.id = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnDeleteId != nil {
 			i.handlers.OnDeleteId(e)
 		} else if drain != nil {
@@ -343,24 +321,12 @@ func (i *Registry) Name() string {
 //
 //	 name: unique numeric name of the object
 func (i *Registry) Bind(name uint32, iface string, version uint32, id runtime.Proxy) {
-	const opcode = 0
-	ifaceLen := runtime.PaddedLen(len(iface) + 1)
-	_reqBufLen := 24 + ifaceLen
-	_reqBuf := make([]byte, _reqBufLen)
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(name))
-	l += 4
-	runtime.PutString(_reqBuf[l:l+(4+ifaceLen)], iface, ifaceLen)
-	l += (4 + ifaceLen)
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(version))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf, nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteUint(uint32(name))
+	w.WriteString(iface)
+	w.WriteUint(version)
+	w.WriteObject(id)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -428,40 +394,34 @@ func (e *RegistryGlobalRemoveEvent) Name() uint32 {
 func (e *RegistryGlobalRemoveEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Registry) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Registry) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnGlobal == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnGlobal == nil && drain == nil {
 			return
 		}
 		e := &RegistryGlobalEvent{}
 		e.proxy = i
-		l := 0
-		e.name = runtime.Uint32(data[l : l+4])
-		l += 4
-		_interfaceLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e._interface = runtime.String(data[l : l+_interfaceLen])
-		l += _interfaceLen
-		e.version = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.name = r.ReadUint()
+		e._interface = r.ReadString()
+		e.version = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnGlobal != nil {
 			i.handlers.OnGlobal(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnGlobalRemove == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnGlobalRemove == nil && drain == nil {
 			return
 		}
 		e := &RegistryGlobalRemoveEvent{}
 		e.proxy = i
-		l := 0
-		e.name = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.name = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnGlobalRemove != nil {
 			i.handlers.OnGlobalRemove(e)
 		} else if drain != nil {
@@ -521,20 +481,19 @@ func (e *CallbackDoneEvent) CallbackData() uint32 {
 func (e *CallbackDoneEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Callback) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Callback) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnDone == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnDone == nil && drain == nil {
 			return
 		}
 		e := &CallbackDoneEvent{}
 		e.proxy = i
-		l := 0
-		e.callbackData = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.callbackData = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnDone != nil {
 			i.handlers.OnDone(e)
 		} else if drain != nil {
@@ -573,17 +532,9 @@ func (i *Compositor) Name() string {
 func (i *Compositor) CreateSurface(idHandlers *WlSurfaceHandlers) *WlSurface {
 	id := NewWlSurface(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 0
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteObject(id)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -595,17 +546,9 @@ func (i *Compositor) CreateSurface(idHandlers *WlSurfaceHandlers) *WlSurface {
 func (i *Compositor) CreateRegion(idHandlers *RegionHandlers) *Region {
 	id := NewRegion(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 1
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(id)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -614,7 +557,7 @@ func (i *Compositor) Destroy() error {
 	i.Conn().Unregister(i)
 	return nil
 }
-func (i *Compositor) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Compositor) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 
 // ShmPool: a shared memory pool
@@ -672,27 +615,14 @@ func (i *ShmPool) Name() string {
 func (i *ShmPool) CreateBuffer(offset int32, width int32, height int32, stride int32, format ShmFormat, idHandlers *BufferHandlers) *Buffer {
 	id := NewBuffer(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 0
-	const _reqBufLen = 32
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(offset))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(stride))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(format))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteObject(id)
+	w.WriteInt(offset)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	w.WriteInt(stride)
+	w.WriteUint(uint32(format))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -707,15 +637,8 @@ func (i *ShmPool) CreateBuffer(offset int32, width int32, height int32, stride i
 //	are gone.
 func (i *ShmPool) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 1
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -737,22 +660,14 @@ func (i *ShmPool) Destroy() {
 //
 //	 size: new size of the pool, in bytes
 func (i *ShmPool) Resize(size int32) {
-	const opcode = 2
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(size))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteInt(size)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
 }
-func (i *ShmPool) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *ShmPool) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 
 // Shm: shared memory support
@@ -808,20 +723,11 @@ func (i *Shm) Name() string {
 func (i *Shm) CreatePool(fd int, size int32, idHandlers *ShmPoolHandlers) *ShmPool {
 	id := NewShmPool(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 0
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(size))
-	l += 4
-	oob := syscall.UnixRights(fd)
-	if err := i.Conn().WriteMsg(_reqBuf[:], oob); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteObject(id)
+	w.WriteFd(fd)
+	w.WriteInt(size)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -835,15 +741,8 @@ func (i *Shm) CreatePool(fd int, size int32, idHandlers *ShmPoolHandlers) *ShmPo
 //	Objects created via this interface remain unaffected.
 func (i *Shm) Release() {
 	defer i.Conn().Unregister(i)
-	const opcode = 1
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1670,20 +1569,19 @@ func (e *ShmFormatEvent) Format() ShmFormat {
 func (e *ShmFormatEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Shm) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Shm) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnFormat == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnFormat == nil && drain == nil {
 			return
 		}
 		e := &ShmFormatEvent{}
 		e.proxy = i
-		l := 0
-		e.format = ShmFormat(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.format = ShmFormat(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnFormat != nil {
 			i.handlers.OnFormat(e)
 		} else if drain != nil {
@@ -1751,15 +1649,8 @@ func (i *Buffer) Name() string {
 //	For possible side-effects to a surface, see wl_surface.attach.
 func (i *Buffer) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1788,13 +1679,13 @@ type BufferReleaseEvent struct {
 func (e *BufferReleaseEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Buffer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Buffer) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnRelease == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnRelease == nil && drain == nil {
 			return
 		}
 		e := &BufferReleaseEvent{}
@@ -1863,20 +1754,14 @@ func (i *DataOffer) Name() string {
 //	 serial: serial number of the accept request
 //	 mimeType: mime type accepted by the client
 func (i *DataOffer) Accept(serial uint32, mimeType string) {
-	const opcode = 0
-	mimeTypeLen := runtime.PaddedLen(len(mimeType) + 1)
-	_reqBufLen := 16 + mimeTypeLen
-	_reqBuf := make([]byte, _reqBufLen)
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	runtime.PutString(_reqBuf[l:l+(4+mimeTypeLen)], mimeType, mimeTypeLen)
-	l += (4 + mimeTypeLen)
-	if err := i.Conn().WriteMsg(_reqBuf, nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteUint(uint32(serial))
+	if mimeType == "" {
+		w.WriteUint(0)
+	} else {
+		w.WriteString(mimeType)
+	}
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1904,19 +1789,10 @@ func (i *DataOffer) Accept(serial uint32, mimeType string) {
 //	 mimeType: mime type desired by receiver
 //	 fd: file descriptor for data transfer
 func (i *DataOffer) Receive(mimeType string, fd int) {
-	const opcode = 1
-	mimeTypeLen := runtime.PaddedLen(len(mimeType) + 1)
-	_reqBufLen := 12 + mimeTypeLen
-	_reqBuf := make([]byte, _reqBufLen)
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutString(_reqBuf[l:l+(4+mimeTypeLen)], mimeType, mimeTypeLen)
-	l += (4 + mimeTypeLen)
-	oob := syscall.UnixRights(fd)
-	if err := i.Conn().WriteMsg(_reqBuf, oob); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteString(mimeType)
+	w.WriteFd(fd)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1927,15 +1803,8 @@ func (i *DataOffer) Receive(mimeType string, fd int) {
 //	Destroy the data offer.
 func (i *DataOffer) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 2
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -1958,15 +1827,8 @@ func (i *DataOffer) Destroy() {
 //	If wl_data_offer.finish request is received for a non drag and drop
 //	operation, the invalid_finish protocol error is raised.
 func (i *DataOffer) Finish() {
-	const opcode = 3
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2010,19 +1872,10 @@ func (i *DataOffer) Finish() {
 //	 dndActions: actions supported by the destination client
 //	 preferredAction: action preferred by the destination client
 func (i *DataOffer) SetActions(dndActions DataDeviceManagerDndAction, preferredAction DataDeviceManagerDndAction) {
-	const opcode = 4
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(dndActions))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(preferredAction))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 4)
+	w.WriteUint(uint32(dndActions))
+	w.WriteUint(uint32(preferredAction))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2162,50 +2015,45 @@ func (e *DataOfferActionEvent) DndAction() DataDeviceManagerDndAction {
 func (e *DataOfferActionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *DataOffer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *DataOffer) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnOffer == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnOffer == nil && drain == nil {
 			return
 		}
 		e := &DataOfferOfferEvent{}
 		e.proxy = i
-		l := 0
-		mimeTypeLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e.mimeType = runtime.String(data[l : l+mimeTypeLen])
-		l += mimeTypeLen
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.mimeType = r.ReadString()
 		if i.handlers != nil && i.handlers.OnOffer != nil {
 			i.handlers.OnOffer(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnSourceActions == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnSourceActions == nil && drain == nil {
 			return
 		}
 		e := &DataOfferSourceActionsEvent{}
 		e.proxy = i
-		l := 0
-		e.sourceActions = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.sourceActions = DataDeviceManagerDndAction(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnSourceActions != nil {
 			i.handlers.OnSourceActions(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnAction == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnAction == nil && drain == nil {
 			return
 		}
 		e := &DataOfferActionEvent{}
 		e.proxy = i
-		l := 0
-		e.dndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.dndAction = DataDeviceManagerDndAction(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnAction != nil {
 			i.handlers.OnAction(e)
 		} else if drain != nil {
@@ -2257,18 +2105,9 @@ func (i *DataSource) Name() string {
 //
 //	 mimeType: mime type offered by the data source
 func (i *DataSource) Offer(mimeType string) {
-	const opcode = 0
-	mimeTypeLen := runtime.PaddedLen(len(mimeType) + 1)
-	_reqBufLen := 12 + mimeTypeLen
-	_reqBuf := make([]byte, _reqBufLen)
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutString(_reqBuf[l:l+(4+mimeTypeLen)], mimeType, mimeTypeLen)
-	l += (4 + mimeTypeLen)
-	if err := i.Conn().WriteMsg(_reqBuf, nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteString(mimeType)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2279,15 +2118,8 @@ func (i *DataSource) Offer(mimeType string) {
 //	Destroy the data source.
 func (i *DataSource) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 1
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2312,17 +2144,9 @@ func (i *DataSource) Destroy() {
 //
 //	 dndActions: actions supported by the data source
 func (i *DataSource) SetActions(dndActions DataDeviceManagerDndAction) {
-	const opcode = 2
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(dndActions))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteUint(uint32(dndActions))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2512,49 +2336,43 @@ func (e *DataSourceActionEvent) DndAction() DataDeviceManagerDndAction {
 func (e *DataSourceActionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *DataSource) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnTarget == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnTarget == nil && drain == nil {
 			return
 		}
 		e := &DataSourceTargetEvent{}
 		e.proxy = i
-		l := 0
-		mimeTypeLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e.mimeType = runtime.String(data[l : l+mimeTypeLen])
-		l += mimeTypeLen
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.mimeType = r.ReadString()
 		if i.handlers != nil && i.handlers.OnTarget != nil {
 			i.handlers.OnTarget(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnSend == nil) && drain == nil {
-			if fd != -1 {
+		if i.handlers != nil && i.handlers.OnSend == nil && drain == nil {
+			for _, fd := range msg.FDs {
 				syscall.Close(fd)
 			}
 			return
 		}
 		e := &DataSourceSendEvent{}
 		e.proxy = i
-		l := 0
-		mimeTypeLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e.mimeType = runtime.String(data[l : l+mimeTypeLen])
-		l += mimeTypeLen
-		e.fd = fd
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.mimeType = r.ReadString()
+		e.fd = r.ReadFd()
 		if i.handlers != nil && i.handlers.OnSend != nil {
 			i.handlers.OnSend(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnCancelled == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnCancelled == nil && drain == nil {
 			return
 		}
 		e := &DataSourceCancelledEvent{}
@@ -2565,7 +2383,7 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 			drain <- e
 		}
 	case 3:
-		if (i.handlers != nil && i.handlers.OnDndDropPerformed == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnDndDropPerformed == nil && drain == nil {
 			return
 		}
 		e := &DataSourceDndDropPerformedEvent{}
@@ -2576,7 +2394,7 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 			drain <- e
 		}
 	case 4:
-		if (i.handlers != nil && i.handlers.OnDndFinished == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnDndFinished == nil && drain == nil {
 			return
 		}
 		e := &DataSourceDndFinishedEvent{}
@@ -2587,14 +2405,13 @@ func (i *DataSource) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 			drain <- e
 		}
 	case 5:
-		if (i.handlers != nil && i.handlers.OnAction == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnAction == nil && drain == nil {
 			return
 		}
 		e := &DataSourceActionEvent{}
 		e.proxy = i
-		l := 0
-		e.dndAction = DataDeviceManagerDndAction(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.dndAction = DataDeviceManagerDndAction(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnAction != nil {
 			i.handlers.OnAction(e)
 		} else if drain != nil {
@@ -2677,33 +2494,20 @@ func (i *DataDevice) Name() string {
 //	 icon: drag-and-drop icon surface
 //	 serial: serial number of the implicit grab on the origin
 func (i *DataDevice) StartDrag(source *DataSource, origin *WlSurface, icon *WlSurface, serial uint32) {
-	const opcode = 0
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
+	w := runtime.NewMessageWriter(i, 0)
 	if source == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], source.ID())
-		l += 4
+		w.WriteObject(source)
 	}
-	runtime.PutUint32(_reqBuf[l:l+4], origin.ID())
-	l += 4
+	w.WriteObject(origin)
 	if icon == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], icon.ID())
-		l += 4
+		w.WriteObject(icon)
 	}
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2724,24 +2528,14 @@ func (i *DataDevice) StartDrag(source *DataSource, origin *WlSurface, icon *WlSu
 //	 source: data source for the selection
 //	 serial: serial number of the event that triggered this request
 func (i *DataDevice) SetSelection(source *DataSource, serial uint32) {
-	const opcode = 1
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
+	w := runtime.NewMessageWriter(i, 1)
 	if source == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], source.ID())
-		l += 4
+		w.WriteObject(source)
 	}
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2752,15 +2546,8 @@ func (i *DataDevice) SetSelection(source *DataSource, serial uint32) {
 //	This request destroys the data device.
 func (i *DataDevice) Release() {
 	defer i.Conn().Unregister(i)
-	const opcode = 2
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -2962,49 +2749,43 @@ func (e *DataDeviceSelectionEvent) Id() *DataOffer {
 func (e *DataDeviceSelectionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *DataDevice) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnDataOffer == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnDataOffer == nil && drain == nil {
 			return
 		}
 		e := &DataDeviceDataOfferEvent{}
 		e.proxy = i
-		l := 0
-		e.id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.id = r.ReadObject().(*DataOffer)
 		if i.handlers != nil && i.handlers.OnDataOffer != nil {
 			i.handlers.OnDataOffer(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnEnter == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnEnter == nil && drain == nil {
 			return
 		}
 		e := &DataDeviceEnterEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
-		l += 4
-		e.x = runtime.Fixed(data[l : l+4])
-		l += 4
-		e.y = runtime.Fixed(data[l : l+4])
-		l += 4
-		e.id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.surface = r.ReadObject().(*WlSurface)
+		e.x = r.ReadFixed()
+		e.y = r.ReadFixed()
+		e.id = r.ReadObject().(*DataOffer)
 		if i.handlers != nil && i.handlers.OnEnter != nil {
 			i.handlers.OnEnter(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnLeave == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnLeave == nil && drain == nil {
 			return
 		}
 		e := &DataDeviceLeaveEvent{}
@@ -3015,25 +2796,22 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 			drain <- e
 		}
 	case 3:
-		if (i.handlers != nil && i.handlers.OnMotion == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnMotion == nil && drain == nil {
 			return
 		}
 		e := &DataDeviceMotionEvent{}
 		e.proxy = i
-		l := 0
-		e.time = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.x = runtime.Fixed(data[l : l+4])
-		l += 4
-		e.y = runtime.Fixed(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.time = r.ReadUint()
+		e.x = r.ReadFixed()
+		e.y = r.ReadFixed()
 		if i.handlers != nil && i.handlers.OnMotion != nil {
 			i.handlers.OnMotion(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 4:
-		if (i.handlers != nil && i.handlers.OnDrop == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnDrop == nil && drain == nil {
 			return
 		}
 		e := &DataDeviceDropEvent{}
@@ -3044,14 +2822,13 @@ func (i *DataDevice) Dispatch(opcode uint32, fd int, data []byte, drain chan<- r
 			drain <- e
 		}
 	case 5:
-		if (i.handlers != nil && i.handlers.OnSelection == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnSelection == nil && drain == nil {
 			return
 		}
 		e := &DataDeviceSelectionEvent{}
 		e.proxy = i
-		l := 0
-		e.id = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*DataOffer)
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.id = r.ReadObject().(*DataOffer)
 		if i.handlers != nil && i.handlers.OnSelection != nil {
 			i.handlers.OnSelection(e)
 		} else if drain != nil {
@@ -3104,17 +2881,9 @@ func (i *DataDeviceManager) Name() string {
 func (i *DataDeviceManager) CreateDataSource(idHandlers *DataSourceHandlers) *DataSource {
 	id := NewDataSource(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 0
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteObject(id)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -3129,19 +2898,10 @@ func (i *DataDeviceManager) CreateDataSource(idHandlers *DataSourceHandlers) *Da
 func (i *DataDeviceManager) GetDataDevice(seat *Seat, idHandlers *DataDeviceHandlers) *DataDevice {
 	id := NewDataDevice(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 1
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], seat.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(id)
+	w.WriteObject(seat)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -3220,7 +2980,7 @@ func (e DataDeviceManagerDndAction) Value() string {
 func (e DataDeviceManagerDndAction) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *DataDeviceManager) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *DataDeviceManager) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 
 // Shell: create desktop-style surfaces
@@ -3272,19 +3032,10 @@ func (i *Shell) Name() string {
 func (i *Shell) GetShellSurface(surface *WlSurface, idHandlers *ShellSurfaceHandlers) *ShellSurface {
 	id := NewShellSurface(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 0
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], surface.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteObject(id)
+	w.WriteObject(surface)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -3321,7 +3072,7 @@ func (e ShellError) Value() string {
 func (e ShellError) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *Shell) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Shell) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 
 // ShellSurface: desktop-style metadata interface
@@ -3377,17 +3128,9 @@ func (i *ShellSurface) Name() string {
 //
 //	 serial: serial number of the ping event
 func (i *ShellSurface) Pong(serial uint32) {
-	const opcode = 0
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3405,19 +3148,10 @@ func (i *ShellSurface) Pong(serial uint32) {
 //	 seat: seat whose pointer is used
 //	 serial: serial number of the implicit grab on the pointer
 func (i *ShellSurface) Move(seat *Seat, serial uint32) {
-	const opcode = 1
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], seat.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(seat)
+	w.WriteUint(uint32(serial))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3436,21 +3170,11 @@ func (i *ShellSurface) Move(seat *Seat, serial uint32) {
 //	 serial: serial number of the implicit grab on the pointer
 //	 edges: which edge or corner is being dragged
 func (i *ShellSurface) Resize(seat *Seat, serial uint32, edges ShellSurfaceResize) {
-	const opcode = 2
-	const _reqBufLen = 20
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], seat.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(edges))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteObject(seat)
+	w.WriteUint(uint32(serial))
+	w.WriteUint(uint32(edges))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3462,15 +3186,8 @@ func (i *ShellSurface) Resize(seat *Seat, serial uint32, edges ShellSurfaceResiz
 //
 //	A toplevel surface is not fullscreen, maximized or transient.
 func (i *ShellSurface) SetToplevel() {
-	const opcode = 3
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3492,23 +3209,12 @@ func (i *ShellSurface) SetToplevel() {
 //	 y: surface-local y coordinate
 //	 flags: transient surface behavior
 func (i *ShellSurface) SetTransient(parent *WlSurface, x int32, y int32, flags ShellSurfaceTransient) {
-	const opcode = 4
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], parent.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(flags))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 4)
+	w.WriteObject(parent)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	w.WriteUint(uint32(flags))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3555,26 +3261,15 @@ func (i *ShellSurface) SetTransient(parent *WlSurface, x int32, y int32, flags S
 //	 framerate: framerate in mHz
 //	 output: output on which the surface is to be fullscreen
 func (i *ShellSurface) SetFullscreen(method ShellSurfaceFullscreenMethod, framerate uint32, output *Output) {
-	const opcode = 5
-	const _reqBufLen = 20
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(method))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(framerate))
-	l += 4
+	w := runtime.NewMessageWriter(i, 5)
+	w.WriteUint(uint32(method))
+	w.WriteUint(uint32(framerate))
 	if output == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], output.ID())
-		l += 4
+		w.WriteObject(output)
 	}
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3610,27 +3305,14 @@ func (i *ShellSurface) SetFullscreen(method ShellSurfaceFullscreenMethod, framer
 //	 y: surface-local y coordinate
 //	 flags: transient surface behavior
 func (i *ShellSurface) SetPopup(seat *Seat, serial uint32, parent *WlSurface, x int32, y int32, flags ShellSurfaceTransient) {
-	const opcode = 6
-	const _reqBufLen = 32
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], seat.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], parent.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(flags))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 6)
+	w.WriteObject(seat)
+	w.WriteUint(uint32(serial))
+	w.WriteObject(parent)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	w.WriteUint(uint32(flags))
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3660,22 +3342,13 @@ func (i *ShellSurface) SetPopup(seat *Seat, serial uint32, parent *WlSurface, x 
 //
 //	 output: output on which the surface is to be maximized
 func (i *ShellSurface) SetMaximized(output *Output) {
-	const opcode = 7
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
+	w := runtime.NewMessageWriter(i, 7)
 	if output == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], output.ID())
-		l += 4
+		w.WriteObject(output)
 	}
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3694,18 +3367,9 @@ func (i *ShellSurface) SetMaximized(output *Output) {
 //
 //	 title: surface title
 func (i *ShellSurface) SetTitle(title string) {
-	const opcode = 8
-	titleLen := runtime.PaddedLen(len(title) + 1)
-	_reqBufLen := 12 + titleLen
-	_reqBuf := make([]byte, _reqBufLen)
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutString(_reqBuf[l:l+(4+titleLen)], title, titleLen)
-	l += (4 + titleLen)
-	if err := i.Conn().WriteMsg(_reqBuf, nil); err != nil {
+	w := runtime.NewMessageWriter(i, 8)
+	w.WriteString(title)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3723,18 +3387,9 @@ func (i *ShellSurface) SetTitle(title string) {
 //
 //	 class: surface class
 func (i *ShellSurface) SetClass(class string) {
-	const opcode = 9
-	classLen := runtime.PaddedLen(len(class) + 1)
-	_reqBufLen := 12 + classLen
-	_reqBuf := make([]byte, _reqBufLen)
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutString(_reqBuf[l:l+(4+classLen)], class, classLen)
-	l += (4 + classLen)
-	if err := i.Conn().WriteMsg(_reqBuf, nil); err != nil {
+	w := runtime.NewMessageWriter(i, 9)
+	w.WriteString(class)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -3981,45 +3636,41 @@ type ShellSurfacePopupDoneEvent struct {
 func (e *ShellSurfacePopupDoneEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *ShellSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *ShellSurface) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnPing == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnPing == nil && drain == nil {
 			return
 		}
 		e := &ShellSurfacePingEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnPing != nil {
 			i.handlers.OnPing(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnConfigure == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnConfigure == nil && drain == nil {
 			return
 		}
 		e := &ShellSurfaceConfigureEvent{}
 		e.proxy = i
-		l := 0
-		e.edges = ShellSurfaceResize(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.width = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.height = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.edges = ShellSurfaceResize(r.ReadUint())
+		e.width = r.ReadInt()
+		e.height = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnConfigure != nil {
 			i.handlers.OnConfigure(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnPopupDone == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnPopupDone == nil && drain == nil {
 			return
 		}
 		e := &ShellSurfacePopupDoneEvent{}
@@ -4145,15 +3796,8 @@ func (i *WlSurface) Name() string {
 //	Deletes the surface and invalidates its object ID.
 func (i *WlSurface) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4232,26 +3876,15 @@ func (i *WlSurface) Destroy() {
 //	 x: surface-local x coordinate
 //	 y: surface-local y coordinate
 func (i *WlSurface) Attach(buffer *Buffer, x int32, y int32) {
-	const opcode = 1
-	const _reqBufLen = 20
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
+	w := runtime.NewMessageWriter(i, 1)
 	if buffer == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], buffer.ID())
-		l += 4
+		w.WriteObject(buffer)
 	}
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w.WriteInt(x)
+	w.WriteInt(y)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4287,23 +3920,12 @@ func (i *WlSurface) Attach(buffer *Buffer, x int32, y int32) {
 //	 width: width of damage rectangle
 //	 height: height of damage rectangle
 func (i *WlSurface) Damage(x int32, y int32, width int32, height int32) {
-	const opcode = 2
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4346,17 +3968,9 @@ func (i *WlSurface) Damage(x int32, y int32, width int32, height int32) {
 func (i *WlSurface) Frame(callbackHandlers *CallbackHandlers) *Callback {
 	callback := NewCallback(callbackHandlers)
 	i.Conn().Register(callback)
-	const opcode = 3
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], callback.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	w.WriteObject(callback)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return callback
@@ -4392,22 +4006,13 @@ func (i *WlSurface) Frame(callbackHandlers *CallbackHandlers) *Callback {
 //
 //	 region: opaque region of the surface
 func (i *WlSurface) SetOpaqueRegion(region *Region) {
-	const opcode = 4
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
+	w := runtime.NewMessageWriter(i, 4)
 	if region == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], region.ID())
-		l += 4
+		w.WriteObject(region)
 	}
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4441,22 +4046,13 @@ func (i *WlSurface) SetOpaqueRegion(region *Region) {
 //
 //	 region: input region of the surface
 func (i *WlSurface) SetInputRegion(region *Region) {
-	const opcode = 5
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
+	w := runtime.NewMessageWriter(i, 5)
 	if region == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], region.ID())
-		l += 4
+		w.WriteObject(region)
 	}
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4484,15 +4080,8 @@ func (i *WlSurface) SetInputRegion(region *Region) {
 //
 //	Other interfaces may add further double-buffered surface state.
 func (i *WlSurface) Commit() {
-	const opcode = 6
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 6)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4535,17 +4124,9 @@ func (i *WlSurface) Commit() {
 //
 //	 transform: transform for interpreting buffer contents
 func (i *WlSurface) SetBufferTransform(transform int32) {
-	const opcode = 7
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(transform))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 7)
+	w.WriteInt(transform)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4580,17 +4161,9 @@ func (i *WlSurface) SetBufferTransform(transform int32) {
 //
 //	 scale: scale for interpreting buffer contents
 func (i *WlSurface) SetBufferScale(scale int32) {
-	const opcode = 8
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(scale))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 8)
+	w.WriteInt(scale)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4637,23 +4210,12 @@ func (i *WlSurface) SetBufferScale(scale int32) {
 //	 width: width of damage rectangle
 //	 height: height of damage rectangle
 func (i *WlSurface) DamageBuffer(x int32, y int32, width int32, height int32) {
-	const opcode = 9
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 9)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4681,19 +4243,10 @@ func (i *WlSurface) DamageBuffer(x int32, y int32, width int32, height int32) {
 //	 x: surface-local x coordinate
 //	 y: surface-local y coordinate
 func (i *WlSurface) Offset(x int32, y int32) {
-	const opcode = 10
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 10)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -4851,62 +4404,58 @@ func (e *WlSurfacePreferredBufferTransformEvent) Transform() OutputTransform {
 func (e *WlSurfacePreferredBufferTransformEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *WlSurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *WlSurface) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnEnter == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnEnter == nil && drain == nil {
 			return
 		}
 		e := &WlSurfaceEnterEvent{}
 		e.proxy = i
-		l := 0
-		e.output = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.output = r.ReadObject().(*Output)
 		if i.handlers != nil && i.handlers.OnEnter != nil {
 			i.handlers.OnEnter(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnLeave == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnLeave == nil && drain == nil {
 			return
 		}
 		e := &WlSurfaceLeaveEvent{}
 		e.proxy = i
-		l := 0
-		e.output = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*Output)
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.output = r.ReadObject().(*Output)
 		if i.handlers != nil && i.handlers.OnLeave != nil {
 			i.handlers.OnLeave(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnPreferredBufferScale == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnPreferredBufferScale == nil && drain == nil {
 			return
 		}
 		e := &WlSurfacePreferredBufferScaleEvent{}
 		e.proxy = i
-		l := 0
-		e.factor = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.factor = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnPreferredBufferScale != nil {
 			i.handlers.OnPreferredBufferScale(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 3:
-		if (i.handlers != nil && i.handlers.OnPreferredBufferTransform == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnPreferredBufferTransform == nil && drain == nil {
 			return
 		}
 		e := &WlSurfacePreferredBufferTransformEvent{}
 		e.proxy = i
-		l := 0
-		e.transform = OutputTransform(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.transform = OutputTransform(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnPreferredBufferTransform != nil {
 			i.handlers.OnPreferredBufferTransform(e)
 		} else if drain != nil {
@@ -4958,17 +4507,9 @@ func (i *Seat) Name() string {
 func (i *Seat) GetPointer(idHandlers *PointerHandlers) *Pointer {
 	id := NewPointer(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 0
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteObject(id)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -4987,17 +4528,9 @@ func (i *Seat) GetPointer(idHandlers *PointerHandlers) *Pointer {
 func (i *Seat) GetKeyboard(idHandlers *KeyboardHandlers) *Keyboard {
 	id := NewKeyboard(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 1
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(id)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -5016,17 +4549,9 @@ func (i *Seat) GetKeyboard(idHandlers *KeyboardHandlers) *Keyboard {
 func (i *Seat) GetTouch(idHandlers *TouchHandlers) *Touch {
 	id := NewTouch(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 2
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteObject(id)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -5038,15 +4563,8 @@ func (i *Seat) GetTouch(idHandlers *TouchHandlers) *Touch {
 //	use the seat object anymore.
 func (i *Seat) Release() {
 	defer i.Conn().Unregister(i)
-	const opcode = 3
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -5197,36 +4715,32 @@ func (e *SeatNameEvent) Name() string {
 func (e *SeatNameEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Seat) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Seat) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnCapabilities == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnCapabilities == nil && drain == nil {
 			return
 		}
 		e := &SeatCapabilitiesEvent{}
 		e.proxy = i
-		l := 0
-		e.capabilities = SeatCapability(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.capabilities = SeatCapability(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnCapabilities != nil {
 			i.handlers.OnCapabilities(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnName == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnName == nil && drain == nil {
 			return
 		}
 		e := &SeatNameEvent{}
 		e.proxy = i
-		l := 0
-		nameLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e.name = runtime.String(data[l : l+nameLen])
-		l += nameLen
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.name = r.ReadString()
 		if i.handlers != nil && i.handlers.OnName != nil {
 			i.handlers.OnName(e)
 		} else if drain != nil {
@@ -5324,28 +4838,16 @@ func (i *Pointer) Name() string {
 //	 hotspotX: surface-local x coordinate
 //	 hotspotY: surface-local y coordinate
 func (i *Pointer) SetCursor(serial uint32, surface *WlSurface, hotspotX int32, hotspotY int32) {
-	const opcode = 0
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(serial))
-	l += 4
+	w := runtime.NewMessageWriter(i, 0)
+	w.WriteUint(uint32(serial))
 	if surface == nil {
-		runtime.PutUint32(_reqBuf[l:l+4], 0)
-		l += 4
+		w.WriteUint(0)
 	} else {
-		runtime.PutUint32(_reqBuf[l:l+4], surface.ID())
-		l += 4
+		w.WriteObject(surface)
 	}
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(hotspotX))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(hotspotY))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w.WriteInt(hotspotX)
+	w.WriteInt(hotspotY)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -5360,15 +4862,8 @@ func (i *Pointer) SetCursor(serial uint32, surface *WlSurface, hotspotX int32, h
 //	wl_pointer_destroy() after using this request.
 func (i *Pointer) Release() {
 	defer i.Conn().Unregister(i)
-	const opcode = 1
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -6037,105 +5532,89 @@ func (e *PointerAxisRelativeDirectionEvent) Direction() PointerAxisRelativeDirec
 func (e *PointerAxisRelativeDirectionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Pointer) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnEnter == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnEnter == nil && drain == nil {
 			return
 		}
 		e := &PointerEnterEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
-		l += 4
-		e.surfaceX = runtime.Fixed(data[l : l+4])
-		l += 4
-		e.surfaceY = runtime.Fixed(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.surface = r.ReadObject().(*WlSurface)
+		e.surfaceX = r.ReadFixed()
+		e.surfaceY = r.ReadFixed()
 		if i.handlers != nil && i.handlers.OnEnter != nil {
 			i.handlers.OnEnter(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnLeave == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnLeave == nil && drain == nil {
 			return
 		}
 		e := &PointerLeaveEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.surface = r.ReadObject().(*WlSurface)
 		if i.handlers != nil && i.handlers.OnLeave != nil {
 			i.handlers.OnLeave(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnMotion == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnMotion == nil && drain == nil {
 			return
 		}
 		e := &PointerMotionEvent{}
 		e.proxy = i
-		l := 0
-		e.time = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.surfaceX = runtime.Fixed(data[l : l+4])
-		l += 4
-		e.surfaceY = runtime.Fixed(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.time = r.ReadUint()
+		e.surfaceX = r.ReadFixed()
+		e.surfaceY = r.ReadFixed()
 		if i.handlers != nil && i.handlers.OnMotion != nil {
 			i.handlers.OnMotion(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 3:
-		if (i.handlers != nil && i.handlers.OnButton == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnButton == nil && drain == nil {
 			return
 		}
 		e := &PointerButtonEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.time = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.button = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.state = PointerButtonState(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.time = r.ReadUint()
+		e.button = r.ReadUint()
+		e.state = PointerButtonState(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnButton != nil {
 			i.handlers.OnButton(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 4:
-		if (i.handlers != nil && i.handlers.OnAxis == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnAxis == nil && drain == nil {
 			return
 		}
 		e := &PointerAxisEvent{}
 		e.proxy = i
-		l := 0
-		e.time = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.value = runtime.Fixed(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.time = r.ReadUint()
+		e.axis = PointerAxis(r.ReadUint())
+		e.value = r.ReadFixed()
 		if i.handlers != nil && i.handlers.OnAxis != nil {
 			i.handlers.OnAxis(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 5:
-		if (i.handlers != nil && i.handlers.OnFrame == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnFrame == nil && drain == nil {
 			return
 		}
 		e := &PointerFrameEvent{}
@@ -6146,78 +5625,69 @@ func (i *Pointer) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runt
 			drain <- e
 		}
 	case 6:
-		if (i.handlers != nil && i.handlers.OnAxisSource == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnAxisSource == nil && drain == nil {
 			return
 		}
 		e := &PointerAxisSourceEvent{}
 		e.proxy = i
-		l := 0
-		e.axisSource = PointerAxisSource(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.axisSource = PointerAxisSource(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnAxisSource != nil {
 			i.handlers.OnAxisSource(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 7:
-		if (i.handlers != nil && i.handlers.OnAxisStop == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnAxisStop == nil && drain == nil {
 			return
 		}
 		e := &PointerAxisStopEvent{}
 		e.proxy = i
-		l := 0
-		e.time = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.time = r.ReadUint()
+		e.axis = PointerAxis(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnAxisStop != nil {
 			i.handlers.OnAxisStop(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 8:
-		if (i.handlers != nil && i.handlers.OnAxisDiscrete == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnAxisDiscrete == nil && drain == nil {
 			return
 		}
 		e := &PointerAxisDiscreteEvent{}
 		e.proxy = i
-		l := 0
-		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.discrete = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.axis = PointerAxis(r.ReadUint())
+		e.discrete = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnAxisDiscrete != nil {
 			i.handlers.OnAxisDiscrete(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 9:
-		if (i.handlers != nil && i.handlers.OnAxisValue120 == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnAxisValue120 == nil && drain == nil {
 			return
 		}
 		e := &PointerAxisValue120Event{}
 		e.proxy = i
-		l := 0
-		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.value120 = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.axis = PointerAxis(r.ReadUint())
+		e.value120 = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnAxisValue120 != nil {
 			i.handlers.OnAxisValue120(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 10:
-		if (i.handlers != nil && i.handlers.OnAxisRelativeDirection == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnAxisRelativeDirection == nil && drain == nil {
 			return
 		}
 		e := &PointerAxisRelativeDirectionEvent{}
 		e.proxy = i
-		l := 0
-		e.axis = PointerAxis(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.direction = PointerAxisRelativeDirection(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.axis = PointerAxis(r.ReadUint())
+		e.direction = PointerAxisRelativeDirection(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnAxisRelativeDirection != nil {
 			i.handlers.OnAxisRelativeDirection(e)
 		} else if drain != nil {
@@ -6279,15 +5749,8 @@ func (i *Keyboard) Name() string {
 // Release: release the keyboard object
 func (i *Keyboard) Release() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -6630,121 +6093,100 @@ func (e *KeyboardRepeatInfoEvent) Delay() int32 {
 func (e *KeyboardRepeatInfoEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Keyboard) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Keyboard) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnKeymap == nil) && drain == nil {
-			if fd != -1 {
+		if i.handlers != nil && i.handlers.OnKeymap == nil && drain == nil {
+			for _, fd := range msg.FDs {
 				syscall.Close(fd)
 			}
 			return
 		}
 		e := &KeyboardKeymapEvent{}
 		e.proxy = i
-		l := 0
-		e.format = KeyboardKeymapFormat(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.fd = fd
-		e.size = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.format = KeyboardKeymapFormat(r.ReadUint())
+		e.fd = r.ReadFd()
+		e.size = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnKeymap != nil {
 			i.handlers.OnKeymap(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnEnter == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnEnter == nil && drain == nil {
 			return
 		}
 		e := &KeyboardEnterEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
-		l += 4
-		keysLen := int(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.keys = make([]byte, keysLen)
-		copy(e.keys, data[l:l+keysLen])
-		l += keysLen
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.surface = r.ReadObject().(*WlSurface)
+		e.keys = r.ReadArray()
 		if i.handlers != nil && i.handlers.OnEnter != nil {
 			i.handlers.OnEnter(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnLeave == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnLeave == nil && drain == nil {
 			return
 		}
 		e := &KeyboardLeaveEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.surface = r.ReadObject().(*WlSurface)
 		if i.handlers != nil && i.handlers.OnLeave != nil {
 			i.handlers.OnLeave(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 3:
-		if (i.handlers != nil && i.handlers.OnKey == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnKey == nil && drain == nil {
 			return
 		}
 		e := &KeyboardKeyEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.time = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.key = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.state = KeyboardKeyState(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.time = r.ReadUint()
+		e.key = r.ReadUint()
+		e.state = KeyboardKeyState(r.ReadUint())
 		if i.handlers != nil && i.handlers.OnKey != nil {
 			i.handlers.OnKey(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 4:
-		if (i.handlers != nil && i.handlers.OnModifiers == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnModifiers == nil && drain == nil {
 			return
 		}
 		e := &KeyboardModifiersEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.modsDepressed = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.modsLatched = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.modsLocked = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.group = runtime.Uint32(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.modsDepressed = r.ReadUint()
+		e.modsLatched = r.ReadUint()
+		e.modsLocked = r.ReadUint()
+		e.group = r.ReadUint()
 		if i.handlers != nil && i.handlers.OnModifiers != nil {
 			i.handlers.OnModifiers(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 5:
-		if (i.handlers != nil && i.handlers.OnRepeatInfo == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnRepeatInfo == nil && drain == nil {
 			return
 		}
 		e := &KeyboardRepeatInfoEvent{}
 		e.proxy = i
-		l := 0
-		e.rate = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.delay = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.rate = r.ReadInt()
+		e.delay = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnRepeatInfo != nil {
 			i.handlers.OnRepeatInfo(e)
 		} else if drain != nil {
@@ -6799,15 +6241,8 @@ func (i *Touch) Name() string {
 // Release: release the touch object
 func (i *Touch) Release() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -7062,75 +6497,62 @@ func (e *TouchOrientationEvent) Orientation() float64 {
 func (e *TouchOrientationEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Touch) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Touch) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnDown == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnDown == nil && drain == nil {
 			return
 		}
 		e := &TouchDownEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.time = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.surface = i.Conn().GetProxy(runtime.Uint32(data[l : l+4])).(*WlSurface)
-		l += 4
-		e.id = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.x = runtime.Fixed(data[l : l+4])
-		l += 4
-		e.y = runtime.Fixed(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.time = r.ReadUint()
+		e.surface = r.ReadObject().(*WlSurface)
+		e.id = r.ReadInt()
+		e.x = r.ReadFixed()
+		e.y = r.ReadFixed()
 		if i.handlers != nil && i.handlers.OnDown != nil {
 			i.handlers.OnDown(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnUp == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnUp == nil && drain == nil {
 			return
 		}
 		e := &TouchUpEvent{}
 		e.proxy = i
-		l := 0
-		e.serial = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.time = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.id = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.serial = r.ReadUint()
+		e.time = r.ReadUint()
+		e.id = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnUp != nil {
 			i.handlers.OnUp(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnMotion == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnMotion == nil && drain == nil {
 			return
 		}
 		e := &TouchMotionEvent{}
 		e.proxy = i
-		l := 0
-		e.time = runtime.Uint32(data[l : l+4])
-		l += 4
-		e.id = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.x = runtime.Fixed(data[l : l+4])
-		l += 4
-		e.y = runtime.Fixed(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.time = r.ReadUint()
+		e.id = r.ReadInt()
+		e.x = r.ReadFixed()
+		e.y = r.ReadFixed()
 		if i.handlers != nil && i.handlers.OnMotion != nil {
 			i.handlers.OnMotion(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 3:
-		if (i.handlers != nil && i.handlers.OnFrame == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnFrame == nil && drain == nil {
 			return
 		}
 		e := &TouchFrameEvent{}
@@ -7141,7 +6563,7 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 			drain <- e
 		}
 	case 4:
-		if (i.handlers != nil && i.handlers.OnCancel == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnCancel == nil && drain == nil {
 			return
 		}
 		e := &TouchCancelEvent{}
@@ -7152,34 +6574,29 @@ func (i *Touch) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtim
 			drain <- e
 		}
 	case 5:
-		if (i.handlers != nil && i.handlers.OnShape == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnShape == nil && drain == nil {
 			return
 		}
 		e := &TouchShapeEvent{}
 		e.proxy = i
-		l := 0
-		e.id = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.major = runtime.Fixed(data[l : l+4])
-		l += 4
-		e.minor = runtime.Fixed(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.id = r.ReadInt()
+		e.major = r.ReadFixed()
+		e.minor = r.ReadFixed()
 		if i.handlers != nil && i.handlers.OnShape != nil {
 			i.handlers.OnShape(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 6:
-		if (i.handlers != nil && i.handlers.OnOrientation == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnOrientation == nil && drain == nil {
 			return
 		}
 		e := &TouchOrientationEvent{}
 		e.proxy = i
-		l := 0
-		e.id = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.orientation = runtime.Fixed(data[l : l+4])
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.id = r.ReadInt()
+		e.orientation = r.ReadFixed()
 		if i.handlers != nil && i.handlers.OnOrientation != nil {
 			i.handlers.OnOrientation(e)
 		} else if drain != nil {
@@ -7232,15 +6649,8 @@ func (i *Output) Name() string {
 //	use the output object anymore.
 func (i *Output) Release() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -7692,65 +7102,49 @@ func (e *OutputDescriptionEvent) Description() string {
 func (e *OutputDescriptionEvent) Proxy() runtime.Proxy {
 	return e.proxy
 }
-func (i *Output) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Output) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 	if i.handlers == nil && drain == nil {
 		return
 	}
-	switch opcode {
+	switch msg.Opcode {
 	case 0:
-		if (i.handlers != nil && i.handlers.OnGeometry == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnGeometry == nil && drain == nil {
 			return
 		}
 		e := &OutputGeometryEvent{}
 		e.proxy = i
-		l := 0
-		e.x = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.y = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.physicalWidth = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.physicalHeight = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.subpixel = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		makeLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e.make = runtime.String(data[l : l+makeLen])
-		l += makeLen
-		modelLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e.model = runtime.String(data[l : l+modelLen])
-		l += modelLen
-		e.transform = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.x = r.ReadInt()
+		e.y = r.ReadInt()
+		e.physicalWidth = r.ReadInt()
+		e.physicalHeight = r.ReadInt()
+		e.subpixel = r.ReadInt()
+		e.make = r.ReadString()
+		e.model = r.ReadString()
+		e.transform = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnGeometry != nil {
 			i.handlers.OnGeometry(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 1:
-		if (i.handlers != nil && i.handlers.OnMode == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnMode == nil && drain == nil {
 			return
 		}
 		e := &OutputModeEvent{}
 		e.proxy = i
-		l := 0
-		e.flags = OutputMode(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.width = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.height = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
-		e.refresh = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.flags = OutputMode(r.ReadUint())
+		e.width = r.ReadInt()
+		e.height = r.ReadInt()
+		e.refresh = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnMode != nil {
 			i.handlers.OnMode(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 2:
-		if (i.handlers != nil && i.handlers.OnDone == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnDone == nil && drain == nil {
 			return
 		}
 		e := &OutputDoneEvent{}
@@ -7761,46 +7155,39 @@ func (i *Output) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runti
 			drain <- e
 		}
 	case 3:
-		if (i.handlers != nil && i.handlers.OnScale == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnScale == nil && drain == nil {
 			return
 		}
 		e := &OutputScaleEvent{}
 		e.proxy = i
-		l := 0
-		e.factor = int32(runtime.Uint32(data[l : l+4]))
-		l += 4
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.factor = r.ReadInt()
 		if i.handlers != nil && i.handlers.OnScale != nil {
 			i.handlers.OnScale(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 4:
-		if (i.handlers != nil && i.handlers.OnName == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnName == nil && drain == nil {
 			return
 		}
 		e := &OutputNameEvent{}
 		e.proxy = i
-		l := 0
-		nameLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e.name = runtime.String(data[l : l+nameLen])
-		l += nameLen
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.name = r.ReadString()
 		if i.handlers != nil && i.handlers.OnName != nil {
 			i.handlers.OnName(e)
 		} else if drain != nil {
 			drain <- e
 		}
 	case 5:
-		if (i.handlers != nil && i.handlers.OnDescription == nil) && drain == nil {
+		if i.handlers != nil && i.handlers.OnDescription == nil && drain == nil {
 			return
 		}
 		e := &OutputDescriptionEvent{}
 		e.proxy = i
-		l := 0
-		descriptionLen := runtime.PaddedLen(int(runtime.Uint32(data[l : l+4])))
-		l += 4
-		e.description = runtime.String(data[l : l+descriptionLen])
-		l += descriptionLen
+		r := runtime.NewMessageReader(i.Conn(), msg)
+		e.description = r.ReadString()
 		if i.handlers != nil && i.handlers.OnDescription != nil {
 			i.handlers.OnDescription(e)
 		} else if drain != nil {
@@ -7840,15 +7227,8 @@ func (i *Region) Name() string {
 //	Destroy the region.  This will invalidate the object ID.
 func (i *Region) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -7864,23 +7244,12 @@ func (i *Region) Destroy() {
 //	 width: rectangle width
 //	 height: rectangle height
 func (i *Region) Add(x int32, y int32, width int32, height int32) {
-	const opcode = 1
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -7896,28 +7265,17 @@ func (i *Region) Add(x int32, y int32, width int32, height int32) {
 //	 width: rectangle width
 //	 height: rectangle height
 func (i *Region) Subtract(x int32, y int32, width int32, height int32) {
-	const opcode = 2
-	const _reqBufLen = 24
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(width))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(height))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	w.WriteInt(width)
+	w.WriteInt(height)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
 }
-func (i *Region) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Region) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 
 // Subcompositor: sub-surface compositing
@@ -7983,15 +7341,8 @@ func (i *Subcompositor) Name() string {
 //	objects, wl_subsurface objects included.
 func (i *Subcompositor) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -8025,21 +7376,11 @@ func (i *Subcompositor) Destroy() {
 func (i *Subcompositor) GetSubsurface(surface *WlSurface, parent *WlSurface, idHandlers *SubsurfaceHandlers) *Subsurface {
 	id := NewSubsurface(idHandlers)
 	i.Conn().Register(id)
-	const opcode = 1
-	const _reqBufLen = 20
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], id.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], surface.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], parent.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(id)
+	w.WriteObject(surface)
+	w.WriteObject(parent)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return id
@@ -8078,7 +7419,7 @@ func (e SubcompositorError) Value() string {
 func (e SubcompositorError) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *Subcompositor) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Subcompositor) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 
 // Subsurface: sub-surface interface to a wl_surface
@@ -8211,15 +7552,8 @@ func (i *Subsurface) Name() string {
 //	to the parent is deleted. The wl_surface is unmapped immediately.
 func (i *Subsurface) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -8246,19 +7580,10 @@ func (i *Subsurface) Destroy() {
 //	 x: x coordinate in the parent surface
 //	 y: y coordinate in the parent surface
 func (i *Subsurface) SetPosition(x int32, y int32) {
-	const opcode = 1
-	const _reqBufLen = 16
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(x))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(y))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteInt(x)
+	w.WriteInt(y)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -8283,17 +7608,9 @@ func (i *Subsurface) SetPosition(x int32, y int32) {
 //
 //	 sibling: the reference surface
 func (i *Subsurface) PlaceAbove(sibling *WlSurface) {
-	const opcode = 2
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], sibling.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 2)
+	w.WriteObject(sibling)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -8307,17 +7624,9 @@ func (i *Subsurface) PlaceAbove(sibling *WlSurface) {
 //
 //	 sibling: the reference surface
 func (i *Subsurface) PlaceBelow(sibling *WlSurface) {
-	const opcode = 3
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], sibling.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 3)
+	w.WriteObject(sibling)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -8339,15 +7648,8 @@ func (i *Subsurface) PlaceBelow(sibling *WlSurface) {
 //
 //	See wl_subsurface for the recursive effect of this mode.
 func (i *Subsurface) SetSync() {
-	const opcode = 4
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 4)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -8375,15 +7677,8 @@ func (i *Subsurface) SetSync() {
 //	If a surface's parent surface behaves as desynchronized, then
 //	the cached state is applied on set_desync.
 func (i *Subsurface) SetDesync() {
-	const opcode = 5
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 5)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -8416,7 +7711,7 @@ func (e SubsurfaceError) Value() string {
 func (e SubsurfaceError) String() string {
 	return e.Name() + "=" + e.Value()
 }
-func (i *Subsurface) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Subsurface) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 
 // Fixes: wayland protocol fixes
@@ -8444,15 +7739,8 @@ func (i *Fixes) Name() string {
 // Destroy: destroys this object
 func (i *Fixes) Destroy() {
 	defer i.Conn().Unregister(i)
-	const opcode = 0
-	const _reqBufLen = 8
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 0)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
@@ -8473,22 +7761,14 @@ func (i *Fixes) Destroy() {
 //
 //	 registry: the registry to destroy
 func (i *Fixes) DestroyRegistry(registry *Registry) {
-	const opcode = 1
-	const _reqBufLen = 12
-	var _reqBuf [_reqBufLen]byte
-	l := 0
-	runtime.PutUint32(_reqBuf[l:4], i.ID())
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], uint32(_reqBufLen<<16|opcode&0xffff))
-	l += 4
-	runtime.PutUint32(_reqBuf[l:l+4], registry.ID())
-	l += 4
-	if err := i.Conn().WriteMsg(_reqBuf[:], nil); err != nil {
+	w := runtime.NewMessageWriter(i, 1)
+	w.WriteObject(registry)
+	if err := w.Finish(); err != nil {
 		panic(err)
 	}
 	return
 }
-func (i *Fixes) Dispatch(opcode uint32, fd int, data []byte, drain chan<- runtime.Event) {
+func (i *Fixes) Dispatch(msg *runtime.Message, drain chan<- runtime.Event) {
 }
 func GetWaylandInterface(name string) runtime.Proxy {
 	switch name {

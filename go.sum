@@ -1,7 +1,5 @@
-github.com/KononK/resize v0.0.0-20200801203131-21c514740ed6 h1:d0vrynsjC4pt17tdtKQhUiJy1YTh42sKn1V/MKcZjVA=
-github.com/KononK/resize v0.0.0-20200801203131-21c514740ed6/go.mod h1:Ua4BTHG071aADTv7wWBDDDwhq+F9uKaqJkPIlYyMQ64=
-github.com/veandco/go-sdl2 v0.4.40 h1:fZv6wC3zz1Xt167P09gazawnpa0KY5LM7JAvKpX9d/U=
-github.com/veandco/go-sdl2 v0.4.40/go.mod h1:OROqMhHD43nT4/i9crJukyVecjPNYYuCofep6SNiAjY=
+github.com/friedelschoen/wayland v0.1.0 h1:6whbgryFIel1GewJ0SceJr7cpY/NOvjAXm+ycxnzNmA=
+github.com/friedelschoen/wayland v0.1.0/go.mod h1:vHe+nZqx84TIHacjr6C2z+ov5fBArRNhWY7SsC2uL/I=
 golang.org/x/image v0.30.0 h1:jD5RhkmVAnjqaCUXfbGBrn3lpxbknfN9w2UhHHU+5B4=
 golang.org/x/image v0.30.0/go.mod h1:SAEUTxCCMWSrJcCy/4HwavEsfZZJlYxeHLc6tTiAe/c=
 golang.org/x/text v0.28.0 h1:rhazDwis8INMIwQ4tpjLDzUhx6RlXqZNPEM0huQojng=
