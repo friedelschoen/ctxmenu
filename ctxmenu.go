@@ -1,7 +1,6 @@
 package ctxmenu
 
 import (
-	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -202,35 +201,15 @@ func (ctxmenu *ContextMenu) messureText(text string) int {
 	return width.Ceil()
 }
 
-func createTmpfile(size int64) (*os.File, error) {
-	dir := os.Getenv("XDG_RUNTIME_DIR")
-	if dir == "" {
-		return nil, errors.New("XDG_RUNTIME_DIR is not defined in env")
-	}
-	file, err := os.CreateTemp(dir, "wl_shm_go_*")
-	if err != nil {
-		return nil, err
-	}
-	err = file.Truncate(size)
-	if err != nil {
-		return nil, err
-	}
-	err = os.Remove(file.Name())
-	if err != nil {
-		return nil, err
-	}
-	return file, nil
-}
-
 func (ctxmenu *ContextMenu) sync() {
 	done := make(chan struct{})
 	// Get display sync callback
-	callback := ctxmenu.display.Sync(&proto.CallbackHandlers{
-		OnDone: func(_ wayland.Event) {
+	ctxmenu.display.Sync(&proto.CallbackHandlers{
+		OnDone: func(_ wayland.Event) bool {
 			done <- struct{}{}
+			return true
 		},
 	})
-	defer callback.Destroy()
 
 	<-done
 }
@@ -249,47 +228,111 @@ func (QuitEvent) Proxy() wayland.Proxy {
 	return nil
 }
 
+func (cm *ContextMenu) getPointerPosition() (*proto.WlSurface, *proto.LayerSurface) {
+	surf := cm.compositor.CreateSurface(nil)
+
+	var lsurf *proto.LayerSurface
+	lsurf = cm.layerShell.GetLayerSurface(surf, cm.output, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
+		// Listen for configure/closed
+		OnConfigure: func(ev wayland.Event) bool {
+			e := ev.(*proto.LayerSurfaceConfigureEvent)
+			// Ack first (required)
+			lsurf.AckConfigure(e.Serial())
+
+			img, err := NewSurfaceImage(image.Rect(0, 0, int(e.Width()), int(e.Height())), cm.shm)
+			if err != nil {
+				panic(err)
+			}
+			surf.Attach(img.Buffer(), 0, 0)
+			surf.Commit()
+			img.Close()
+			return true
+		},
+	})
+
+	lsurf.SetExclusiveZone(-1)
+	lsurf.SetAnchor(proto.LayerSurfaceAnchorLeft | proto.LayerSurfaceAnchorRight | proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorBottom)
+	surf.Commit()
+	cm.sync()
+
+	cm.sync()
+	return surf, lsurf
+}
+
 /* run event loop */
-func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
-	if err := rootmenu.show(nil); err != nil {
-		return def, err
-	}
-	rootmenu.draw()
-
+func Run[T comparable](items Menu[T], conf Config, wlDisplay string, hover func(T)) (ret T, werr error) {
 	/* event queue with a buffer of 64 */
-	events := make(chan wayland.Event, 64)
-	rootmenu.ctxmenu.conn.SetDrain(events)
+	events := make(chan wayland.Event, 128)
 
-	curmenu := rootmenu
-	curmenu.show(nil)
+	ctxmenu, err := initContext(conf, wlDisplay, events)
+	if err != nil {
+		return ret, err
+	}
+
+	pointerpos, layerpos := ctxmenu.getPointerPosition()
+
+	rootmenu, err := items.makeMenu(ctxmenu)
+	if err != nil {
+		return ret, err
+	}
+
+	var curmenu *menuState[T]
 	var buf []byte
-	var previtem *Item[T]
+	var previtem *itemState[T]
 	// curmenu.selected := -1
 	var hasleft *time.Timer
 	var kb *xkb.Keyboard
 	var curY int
+eventLoop:
 	for event := range events {
+		if ev, ok := event.(*proto.PointerEnterEvent); ok && pointerpos != nil {
+			if ev.Surface().ID() == pointerpos.ID() {
+				ctxmenu.x = int(ev.SurfaceX())
+				ctxmenu.y = int(ev.SurfaceY())
+				layerpos.Destroy()
+				layerpos = nil
+				pointerpos.Destroy()
+				pointerpos = nil
+				curmenu = rootmenu
+				if err := rootmenu.show(nil); err != nil {
+					break eventLoop
+				}
+				rootmenu.draw()
+				ctxmenu.sync()
+				continue
+			}
+		}
+
+		if curmenu == nil {
+			continue
+		}
 		var action Action
 		switch ev := event.(type) {
 		case QuitEvent:
-			return def, ErrExited
+			err = ErrExited
+			break eventLoop
 		case *proto.DisplayErrorEvent:
-			return def, fmt.Errorf("display error event on %s: %s [%d]\n", ev.ObjectId().Name(), ev.Message(), ev.Code())
-
+			err = fmt.Errorf("displayerror on %s: %s [%d]\n", ev.ObjectID().Name(), ev.Message(), ev.Code())
+			break eventLoop
 		case *proto.WlSurfaceEnterEvent:
 			action = ActionDraw
+		case *proto.PointerEnterEvent:
+			if hasleft != nil {
+				hasleft.Stop()
+				hasleft = nil
+			}
+			for menu := range rootmenu.seq() {
+				if menu.surface != nil && ev.Surface().ID() == menu.surface.ID() {
+					curmenu = menu
+					break
+				}
+			}
 		case *proto.PointerLeaveEvent:
 			if rootmenu.ctxmenu.seen {
 				hasleft = time.AfterFunc(100*time.Millisecond, func() {
 					events <- QuitEvent{}
 				})
 			}
-		case *proto.PointerEnterEvent:
-			if hasleft != nil {
-				hasleft.Stop()
-				hasleft = nil
-			}
-			curmenu = rootmenu.getmenu(ev.Surface().ID())
 		case *proto.PointerMotionEvent:
 			curY = int(ev.SurfaceY())
 			itemidx := curmenu.getitem(curY)
@@ -299,13 +342,13 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 			if itemidx == curmenu.selected {
 				continue
 			}
-			item := curmenu.items[itemidx]
+			item := curmenu.children[itemidx]
 			if previtem == item {
 				continue
 			}
 			rootmenu.ctxmenu.seen = true
 			previtem = item
-			if item.label == "" {
+			if item.Label == "" {
 				curmenu.selected = -1
 			} else {
 				curmenu.selected = itemidx
@@ -315,8 +358,8 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 				item.submenu.show(curmenu)
 				item.submenu.draw()
 			}
-			if item.label != "" && hover != nil {
-				hover(item.output)
+			if item.Label != "" && hover != nil {
+				hover(item.Output)
 			}
 			action = ActionClear | ActionMap | ActionDraw
 		case *proto.PointerAxisEvent:
@@ -331,7 +374,7 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 				action = ActionClear | ActionMap | ActionDraw
 				break
 			} else if ev.Value() > 0 {
-				curmenu.first = min(curmenu.first+1, len(curmenu.items)-curmenu.overflow)
+				curmenu.first = min(curmenu.first+1, len(curmenu.children)-curmenu.overflow)
 				action = ActionClear | ActionMap | ActionDraw
 				break
 			}
@@ -353,18 +396,19 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 				action = ActionClear | ActionMap | ActionDraw
 				break
 			} else if ovitem == OverflowBottom {
-				curmenu.first = min(curmenu.first+1, len(curmenu.items)-curmenu.overflow)
+				curmenu.first = min(curmenu.first+1, len(curmenu.children)-curmenu.overflow)
 				action = ActionClear | ActionMap | ActionDraw
 				break
 			}
-			if menu.items[item].label == "" {
-				return /* ignore separators */
+			if menu.children[item].Label == "" {
+				break /* ignore separators */
 			}
-			if menu.items[item].submenu != nil {
-				curmenu = menu.items[item].submenu
+			if menu.children[item].submenu != nil {
+				curmenu = menu.children[item].submenu
 				curmenu.show(menu)
 			} else {
-				return menu.items[item].output, nil
+				ret, werr = menu.children[item].Output, nil
+				break eventLoop
 			}
 			curmenu.selected = 0
 			action = ActionClear | ActionMap | ActionDraw
@@ -403,7 +447,8 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 
 			/* esc closes ctxmenu when current menu is the root menu */
 			if key.Sym == xkb.K_Escape && curmenu.caller == nil {
-				return def, ErrExited
+				werr = ErrExited
+				break eventLoop
 			}
 
 			/* cycle through menu */
@@ -448,14 +493,15 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 				action = ActionClear | ActionDraw
 			case xkb.K_Return, xkb.K_Right:
 				if curmenu.selected != -1 {
-					if curmenu.items[curmenu.selected].label == "" {
-						return /* ignore separators */
+					if curmenu.children[curmenu.selected].Label == "" {
+						break /* ignore separators */
 					}
-					if curmenu.items[curmenu.selected].submenu != nil {
-						curmenu = curmenu.items[curmenu.selected].submenu
+					if curmenu.children[curmenu.selected].submenu != nil {
+						curmenu = curmenu.children[curmenu.selected].submenu
 						curmenu.show(curmenu)
 					} else {
-						return curmenu.items[curmenu.selected].output, nil
+						ret, werr = curmenu.children[curmenu.selected].Output, nil
+						break eventLoop
 					}
 					curmenu.selected = 0
 					action = ActionClear | ActionMap | ActionDraw
@@ -489,7 +535,12 @@ func Run[T comparable](rootmenu *Menu[T], hover func(T)) (def T, error_ error) {
 			curmenu.draw()
 		}
 	}
-	return def, ErrExited
+
+	for m := range rootmenu.seq() {
+		m.close()
+	}
+
+	return
 }
 
 func (ctxmenu *ContextMenu) getPointer() {
@@ -500,7 +551,7 @@ func (ctxmenu *ContextMenu) getKeyboard() {
 	ctxmenu.keyboard = ctxmenu.seat.GetKeyboard(nil)
 }
 
-func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
+func initContext(conf Config, wlDisplay string, drain chan<- wayland.Event) (*ContextMenu, error) {
 	var ctxmenu ContextMenu
 	/* initializers */
 	var err error
@@ -534,30 +585,36 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 		return nil, err
 	}
 
-	ctxmenu.x = 100
-	ctxmenu.y = 100
-
 	ctxmenu.conn, err = wayland.Connect(wlDisplay)
 	if err != nil {
 		log.Fatalf("unable to connect to wayland server: %v", err)
+		return nil, err
 	}
+	ctxmenu.conn.SetDrain(drain)
 
 	// Connect to wayland server
-	ctxmenu.display = proto.NewDisplay(nil)
+	ctxmenu.display = proto.NewDisplay(&proto.DisplayHandlers{
+		OnError: func(event wayland.Event) bool {
+			ev := event.(*proto.DisplayErrorEvent)
+			log.Fatalf("displayerror on %s: %s [%d]\n", ev.ObjectID().Name(), ev.Message(), ev.Code())
+			return true
+		},
+		OnDeleteID: ctxmenu.conn.UnregisterEvent,
+	})
+
 	/* manually registing display */
 	ctxmenu.conn.Register(ctxmenu.display)
 
-	ctxmenu.compositor = proto.NewCompositor(nil)
+	ctxmenu.compositor = proto.NewCompositor()
 	ctxmenu.shm = proto.NewShm(nil)
 	ctxmenu.seat = proto.NewSeat(&proto.SeatHandlers{
-		OnCapabilities: func(evt wayland.Event) {
+		OnCapabilities: func(evt wayland.Event) bool {
 			e := evt.(*proto.SeatCapabilitiesEvent)
 
 			hasPointer := e.Capabilities()&proto.SeatCapabilityPointer != 0
 			if hasPointer && ctxmenu.pointer == nil {
 				ctxmenu.getPointer()
 			} else if !hasPointer && ctxmenu.pointer != nil {
-				ctxmenu.pointer.Release()
 				ctxmenu.pointer = nil
 			}
 
@@ -565,20 +622,22 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 			if hasKeyboard && ctxmenu.keyboard == nil {
 				ctxmenu.getKeyboard()
 			} else if !hasKeyboard && ctxmenu.keyboard != nil {
-				ctxmenu.keyboard.Release()
 				ctxmenu.keyboard = nil
 			}
+			return true
 		},
 	})
-	ctxmenu.layerShell = proto.NewLayerShell(nil)
+	ctxmenu.layerShell = proto.NewLayerShell()
 	ctxmenu.output = proto.NewOutput(&proto.OutputHandlers{
-		OnGeometry: func(evt wayland.Event) {
+		OnGeometry: func(evt wayland.Event) bool {
 			e := evt.(*proto.OutputGeometryEvent)
 			ctxmenu.monOffset = image.Point{int(e.X()), int(e.Y())}
+			return true
 		},
-		OnMode: func(evt wayland.Event) {
+		OnMode: func(evt wayland.Event) bool {
 			e := evt.(*proto.OutputModeEvent)
 			ctxmenu.monSize = image.Point{int(e.Width()), int(e.Height())}
+			return true
 		},
 	})
 	reg := wayland.Registrar{}
@@ -592,5 +651,7 @@ func CtxMenuInit(conf Config, wlDisplay string) (*ContextMenu, error) {
 	// Wait for interfaces to register
 	ctxmenu.sync()
 
+	// Issue output geometry
+	ctxmenu.sync()
 	return &ctxmenu, err
 }

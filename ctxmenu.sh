@@ -1,5 +1,7 @@
 #!/bin/sh
 
+# sh generate.sh
+go build -C cmd/ctxmenu -v
 cmd/ctxmenu/ctxmenu -l <<EOF
 Terminal
 Settings

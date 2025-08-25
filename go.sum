@@ -1,5 +1,3 @@
-github.com/friedelschoen/wayland v0.1.0 h1:6whbgryFIel1GewJ0SceJr7cpY/NOvjAXm+ycxnzNmA=
-github.com/friedelschoen/wayland v0.1.0/go.mod h1:vHe+nZqx84TIHacjr6C2z+ov5fBArRNhWY7SsC2uL/I=
 golang.org/x/image v0.30.0 h1:jD5RhkmVAnjqaCUXfbGBrn3lpxbknfN9w2UhHHU+5B4=
 golang.org/x/image v0.30.0/go.mod h1:SAEUTxCCMWSrJcCy/4HwavEsfZZJlYxeHLc6tTiAe/c=
 golang.org/x/text v0.28.0 h1:rhazDwis8INMIwQ4tpjLDzUhx6RlXqZNPEM0huQojng=

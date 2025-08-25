@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,7 +12,7 @@ import (
 )
 
 func main() {
-	xmenu, err := ctxmenu.CtxMenuInit(ctxmenu.Config{
+	conf := ctxmenu.Config{
 		/* font, separate different fonts with comma */
 		FontName: "monospace:size=12",
 
@@ -42,12 +43,9 @@ func main() {
 		/* area around the icon, the triangle and the separator */
 		PaddingX: 4,
 		PaddingY: 4,
-	}, "")
-	if err != nil {
-		log.Fatalln(err)
 	}
 
-	rootmenu := ctxmenu.MakeMenu[string](xmenu)
+	var rootmenu ctxmenu.Menu[string]
 
 	scan := bufio.NewScanner(os.Stdin)
 	delim := '\t'
@@ -83,15 +81,26 @@ func main() {
 		default:
 			panic("too many fields: " + string(text))
 		}
-		if err := rootmenu.Append(label, output, imgpath, depth); err != nil {
-			panic(err)
+		m := &rootmenu
+		for range depth {
+			if len(*m) == 0 {
+				panic("too deep")
+			}
+			m = &(*m)[len(*m)-1].SubMenu
 		}
+		*m = append(*m, ctxmenu.Item[string]{
+			Label:     label,
+			Output:    output,
+			Imagefile: imgpath,
+		})
 	}
 
-	res, err := ctxmenu.Run(rootmenu, func(s string) {
+	res, err := ctxmenu.Run(rootmenu, conf, "", func(s string) {
 		fmt.Printf("\t%s\n", s)
 	})
-	if err == nil {
+	if err != nil && !errors.Is(err, ctxmenu.ErrExited) {
+		log.Fatalf("display error: %v\n", err)
+	} else if err == nil {
 		fmt.Printf("%s\n", res)
 	}
 }
