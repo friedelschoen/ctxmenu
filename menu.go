@@ -333,7 +333,7 @@ func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
 
 	img := &SubImage{menu.surf, image.Rect(0, y, menu.w, y+item.h)}
 
-	draw.Draw(img, img.Bounds(), image.NewUniform(color.Background), image.Point{}, draw.Src)
+	draw.Draw(img, img.Bounds(), color.Background, image.Point{}, draw.Src)
 
 	if item.overflower != OverflowNone {
 		pixels := topArrow
@@ -344,7 +344,7 @@ func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
 		x := menu.w/2 - bottomArrow.Rect.Max.X/2
 		y := item.h/2 - bottomArrow.Rect.Max.Y/2
 
-		draw.DrawMask(img, pixels.Bounds().Add(image.Point{x, y}), image.NewUniform(color.Foreground), image.Point{}, pixels, image.Point{}, draw.Over)
+		draw.DrawMask(img, pixels.Bounds().Add(image.Point{x, y}), color.Foreground, image.Point{}, pixels, image.Point{}, draw.Over)
 	} else if item.Label != "" {
 		x := menu.ctxmenu.PaddingX + menu.ctxmenu.BorderSize
 		if item.icon != nil {
@@ -359,12 +359,12 @@ func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
 		}
 		textY := item.h/2 - textH/2
 
-		draw.DrawMask(img, item.labeltex.Bounds().Add(image.Point{x, textY}), image.NewUniform(color.Foreground), image.Point{}, item.labeltex, image.Point{}, draw.Over)
+		draw.DrawMask(img, item.labeltex.Bounds().Add(image.Point{x, textY}), color.Foreground, image.Point{}, item.labeltex, image.Point{}, draw.Over)
 
 		if item.submenu != nil {
 			x := menu.w - rightArrow.Rect.Max.X - menu.ctxmenu.BorderSize - menu.ctxmenu.PaddingX
 			y := item.h/2 - rightArrow.Rect.Max.Y/2
-			draw.DrawMask(img, rightArrow.Bounds().Add(image.Point{x, y}), image.NewUniform(color.Foreground), image.Point{}, rightArrow, image.Point{}, draw.Over)
+			draw.DrawMask(img, rightArrow.Bounds().Add(image.Point{x, y}), color.Foreground, image.Point{}, rightArrow, image.Point{}, draw.Over)
 		}
 
 		if item.icon != nil {
@@ -375,7 +375,7 @@ func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
 	} else {
 		x := menu.ctxmenu.BorderSize + menu.ctxmenu.PaddingX + menu.ctxmenu.SeperatorLength
 		y := menu.ctxmenu.PaddingY
-		draw.Draw(img, image.Rect(x, y, x+menu.w-x*2, y+1), image.NewUniform(menu.ctxmenu.separator), image.Point{}, draw.Src)
+		draw.Draw(img, image.Rect(x, y, x+menu.w-x*2, y+1), menu.ctxmenu.separator, image.Point{}, draw.Src)
 	}
 	return nil
 }
@@ -417,16 +417,16 @@ func (menu *menuState[T]) draw() {
 
 	bw := menu.ctxmenu.BorderSize
 	/* top */
-	draw.Draw(menu.surf, image.Rect(0, 0, menu.w, bw), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
+	draw.Draw(menu.surf, image.Rect(0, 0, menu.w, bw), menu.ctxmenu.border, image.Point{}, draw.Src)
 
 	/* bottom */
-	draw.Draw(menu.surf, image.Rect(0, menu.h-bw, menu.w, menu.h), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
+	draw.Draw(menu.surf, image.Rect(0, menu.h-bw, menu.w, menu.h), menu.ctxmenu.border, image.Point{}, draw.Src)
 
 	/* left */
-	draw.Draw(menu.surf, image.Rect(0, 0, bw, menu.h), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
+	draw.Draw(menu.surf, image.Rect(0, 0, bw, menu.h), menu.ctxmenu.border, image.Point{}, draw.Src)
 
 	/* right */
-	draw.Draw(menu.surf, image.Rect(menu.w-bw, 0, menu.w, menu.h), image.NewUniform(menu.ctxmenu.border), image.Point{}, draw.Src)
+	draw.Draw(menu.surf, image.Rect(menu.w-bw, 0, menu.w, menu.h), menu.ctxmenu.border, image.Point{}, draw.Src)
 
 	menu.surface.Damage(0, 0, int32(menu.w), int32(menu.h))
 	menu.buffer = menu.surf.Buffer()

@@ -12,39 +12,6 @@ import (
 )
 
 func main() {
-	conf := ctxmenu.Config{
-		/* font, separate different fonts with comma */
-		FontName: "monospace:size=12",
-
-		/* colors */
-		BackgroundColor:    "#FFFFFF",
-		ForegroundColor:    "#2E3436",
-		SelbackgroundColor: "#3584E4",
-		SelforegroundColor: "#FFFFFF",
-		SeparatorColor:     "#CDC7C2",
-		BorderColor:        "#E6E6E6",
-
-		/* sizes in pixels */
-		MinItemWidth:    130, /* minimum width of a menu */
-		BorderSize:      1,   /* menu border */
-		SeperatorLength: 3,   /* space around separator */
-
-		/* text alignment, set to LeftAlignment, CenterAlignment or RightAlignment */
-		Alignment: ctxmenu.AlignLeft,
-
-		/*
-		 * The variables below cannot be set by X resources.
-		 * Their values must be less than .height_pixels.
-		 */
-
-		/* the icon size is equal to .height_pixels - .iconpadding * 2 */
-		IconSize: 24,
-
-		/* area around the icon, the triangle and the separator */
-		PaddingX: 4,
-		PaddingY: 4,
-	}
-
 	var rootmenu ctxmenu.Menu[string]
 
 	scan := bufio.NewScanner(os.Stdin)
@@ -95,7 +62,7 @@ func main() {
 		})
 	}
 
-	res, err := ctxmenu.Run(rootmenu, conf, "", func(s string) {
+	res, err := ctxmenu.Run(rootmenu, nil, "", func(s string) {
 		fmt.Printf("\t%s\n", s)
 	})
 	if err != nil && !errors.Is(err, ctxmenu.ErrExited) {

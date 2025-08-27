@@ -35,46 +35,18 @@ const (
 	ItemLast
 )
 
-type Alignment int
-
-/* enum for text alignment */
-const (
-	AlignLeft Alignment = iota
-	AlignCenter
-	AlignRight
-)
-
 /* ColorPair holds text-color information */
 type ColorPair struct {
-	Foreground, Background *color.NRGBA
-}
-
-/* Config holds configurations for ctxmenu */
-type Config struct {
-	/* the values below are set by menu.ctxmenu.h */
-	FontName           string
-	BackgroundColor    string
-	ForegroundColor    string
-	SelbackgroundColor string
-	SelforegroundColor string
-	SeparatorColor     string
-	BorderColor        string
-
-	MinItemWidth       int
-	BorderSize         int
-	SeperatorLength    int
-	IconSize           int
-	PaddingX, PaddingY int
-	Alignment          Alignment
+	Foreground, Background image.Image
 }
 
 type ContextMenu struct {
-	Config
+	*Config
 
 	normal    ColorPair
 	selected  ColorPair
-	border    *color.NRGBA
-	separator *color.NRGBA
+	border    image.Image
+	separator image.Image
 	x, y      int /* initial position */
 
 	font font.Face
@@ -116,7 +88,7 @@ func parseFontString(s string) (font.Face, error) {
 	return opentype.NewFace(fnt, opts)
 }
 
-func parseColor(s string) (*color.NRGBA, error) {
+func parseColor(s string) (image.Image, error) {
 	if len(s) == 0 {
 		return nil, fmt.Errorf("empty color")
 	}
@@ -161,12 +133,12 @@ func parseColor(s string) (*color.NRGBA, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid color: %s", s)
 	}
-	return &color.NRGBA{
+	return image.NewUniform(&color.NRGBA{
 		R: uint8(r),
 		G: uint8(g),
 		B: uint8(b),
 		A: uint8(a),
-	}, nil
+	}), nil
 }
 
 func (ctxmenu *ContextMenu) drawText(dest draw.Image, text string) int {
@@ -260,7 +232,10 @@ func (cm *ContextMenu) getPointerPosition() (*proto.WlSurface, *proto.LayerSurfa
 }
 
 /* run event loop */
-func Run[T comparable](items Menu[T], conf Config, wlDisplay string, hover func(T)) (ret T, werr error) {
+func Run[T comparable](items Menu[T], conf *Config, wlDisplay string, hover func(T)) (ret T, werr error) {
+	if conf == nil {
+		conf = &DefaultConfig
+	}
 	/* event queue with a buffer of 64 */
 	events := make(chan wayland.Event, 128)
 
@@ -551,7 +526,7 @@ func (ctxmenu *ContextMenu) getKeyboard() {
 	ctxmenu.keyboard = ctxmenu.seat.GetKeyboard(nil)
 }
 
-func initContext(conf Config, wlDisplay string, drain chan<- wayland.Event) (*ContextMenu, error) {
+func initContext(conf *Config, wlDisplay string, drain chan<- wayland.Event) (*ContextMenu, error) {
 	var ctxmenu ContextMenu
 	/* initializers */
 	var err error
