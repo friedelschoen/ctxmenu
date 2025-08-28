@@ -1,10 +1,11 @@
 set -xe
 
 CMDPATH=../wayland/cmd/gowls
-GENARGS="--add-cleanup -p proto --strip-prefix=wl_,xdg_ --strip-except=xdg_surface,wl_surface"
+GENARGS="-p proto -P wl_,xdg_ -D xdg_surface,wl_surface"
 
 go build -C ${CMDPATH}
 
-${CMDPATH}/gowls -o proto/wayland.go $GENARGS proto/wayland.xml
-${CMDPATH}/gowls -o proto/xdg-shell.go $GENARGS proto/xdg-shell.xml
-${CMDPATH}/gowls -o proto/wlr-layer-shell-unstable-v1.go $GENARGS --strip-prefix='zwlr_' --strip-suffix='_v1' proto/wlr-layer-shell-unstable-v1.xml
+${CMDPATH}/gowls $GENARGS proto/wayland.xml
+${CMDPATH}/gowls $GENARGS proto/xdg-shell.xml
+${CMDPATH}/gowls $GENARGS -P 'zwlr_' -S '_v1' proto/wlr-layer-shell-unstable-v1.xml
+${CMDPATH}/gowls $GENARGS -P 'wp_' -S '_v1' -f zwp_tablet_tool_v2 proto/cursor-shape-v1.xml

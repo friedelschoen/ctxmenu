@@ -59,6 +59,8 @@ type ContextMenu struct {
 	output     *proto.Output
 	pointer    *proto.Pointer
 	keyboard   *proto.Keyboard
+	pshapeman  *proto.CursorShapeManager
+	pshapedev  *proto.CursorShapeDevice
 
 	monOffset image.Point
 	monSize   image.Point
@@ -295,6 +297,7 @@ eventLoop:
 					break
 				}
 			}
+			ctxmenu.pshapedev.SetShape(ev.Serial(), proto.CursorShapeDeviceShapePointer)
 		case *proto.PointerLeaveEvent:
 			if rootmenu.ctxmenu.seen {
 				hasleft = time.AfterFunc(100*time.Millisecond, func() {
@@ -513,6 +516,7 @@ eventLoop:
 
 func (ctxmenu *ContextMenu) getPointer() {
 	ctxmenu.pointer = ctxmenu.seat.GetPointer(nil)
+	ctxmenu.pshapedev = ctxmenu.pshapeman.GetPointer(ctxmenu.pointer)
 }
 
 func (ctxmenu *ContextMenu) getKeyboard() {
@@ -608,8 +612,10 @@ func initContext(conf *Config, wlDisplay string, drain chan<- wayland.Event) (*C
 			return true
 		},
 	})
+	ctxmenu.pshapeman = proto.NewCursorShapeManager()
+
 	reg := wayland.Registrar{}
-	reg.Add(ctxmenu.compositor, ctxmenu.shm, ctxmenu.seat, ctxmenu.lshell, ctxmenu.output)
+	reg.Add(ctxmenu.compositor, ctxmenu.shm, ctxmenu.seat, ctxmenu.lshell, ctxmenu.output, ctxmenu.pshapeman)
 
 	// Get global interfaces registry
 	ctxmenu.registry = ctxmenu.display.GetRegistry(&proto.RegistryHandlers{
