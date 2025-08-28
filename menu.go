@@ -66,11 +66,11 @@ type menuState[T comparable] struct {
 	overflowItemTop    *itemState[T]
 	overflowItemBottom *itemState[T]
 
-	exit         bool
-	surface      *proto.WlSurface
-	buffer       *proto.Buffer
-	layersurface *proto.LayerSurface
-	surf         *SurfaceImage
+	exit     bool
+	surface  *proto.WlSurface
+	buffer   *proto.Buffer
+	lsurface *proto.LayerSurface
+	surf     *SurfaceImage
 }
 
 func getDecoder(imagepath string) (func(io.Reader) (image.Image, error), error) {
@@ -135,7 +135,7 @@ func (menu *menuState[T]) makeItem(orig Item[T]) (*itemState[T], error) {
 	item.h = menu.ctxmenu.font.Metrics().Height.Ceil() + menu.ctxmenu.PaddingY*2
 
 	/* try to load icon */
-	if item.Imagefile != "" && !menu.ctxmenu.disableIcons {
+	if item.Imagefile != "" && !menu.ctxmenu.DisableIcons {
 		dec, err := getDecoder(item.Imagefile)
 		if err != nil {
 			return nil, err
@@ -154,7 +154,7 @@ func (menu *menuState[T]) makeItem(orig Item[T]) (*itemState[T], error) {
 		item.icon = dst
 
 		// Ugh, NearestNeighbor is ugly... but really fast and suits the case as I want to create small 30x30 (or so) icons
-		xdraw.NearestNeighbor.Scale(dst, dst.Rect, img, img.Bounds(), draw.Over, nil)
+		xdraw.NearestNeighbor.Scale(dst, dst.Rect, img, img.Bounds(), draw.Src, nil)
 		item.w += menu.ctxmenu.IconSize + menu.ctxmenu.PaddingX
 		item.h = max(item.h, menu.ctxmenu.IconSize+menu.ctxmenu.PaddingY*2)
 	}
@@ -181,7 +181,7 @@ func (menu *menuState[T]) updateWindow() error {
 		menu.surface = menu.ctxmenu.compositor.CreateSurface(nil)
 
 		// zwlr_layer_shell_v1.get_layer_surface(surface, output, layer, namespace)
-		menu.layersurface = menu.ctxmenu.layerShell.GetLayerSurface(menu.surface, menu.ctxmenu.output, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
+		menu.lsurface = menu.ctxmenu.lshell.GetLayerSurface(menu.surface, menu.ctxmenu.output, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
 			// Listen for configure/closed
 			OnConfigure: func(ev wayland.Event) bool {
 				e := ev.(*proto.LayerSurfaceConfigureEvent)
@@ -194,20 +194,20 @@ func (menu *menuState[T]) updateWindow() error {
 			},
 		})
 
-		menu.layersurface.SetKeyboardInteractivity(proto.LayerSurfaceKeyboardInteractivityOnDemand)
+		menu.lsurface.SetKeyboardInteractivity(proto.LayerSurfaceKeyboardInteractivityOnDemand)
 
 		// Optional: Make it ignore struts (don’t reserve space like a panel)
 		// -1 means “auto” exclusive zone; 0 means none. For a popup-like surface, 0 is typical.
-		menu.layersurface.SetExclusiveZone(0)
+		menu.lsurface.SetExclusiveZone(0)
 
 		// Typical “popup” anchoring: top-left (change as you like)
-		menu.layersurface.SetAnchor(proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorLeft)
+		menu.lsurface.SetAnchor(proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorLeft)
 
-		menu.layersurface.SetMargin(int32(menu.y), 0, 0, int32(menu.x))
+		menu.lsurface.SetMargin(int32(menu.y), 0, 0, int32(menu.x))
 
 		// Desired size — compositor may override via configure.
 		// If you want the surface to size to your buffer, set 0,0 here; otherwise set a hint.
-		menu.layersurface.SetSize(uint32(menu.w), uint32(menu.h))
+		menu.lsurface.SetSize(uint32(menu.w), uint32(menu.h))
 
 		// Commit the state changes (title & appID) to the server
 		menu.surface.Commit()
@@ -222,7 +222,7 @@ func (menu *menuState[T]) updateWindow() error {
 		menu.buffer = menu.surf.Buffer()
 		menu.surface.Attach(menu.buffer, 0, 0)
 	} else {
-		menu.layersurface.SetMargin(int32(menu.y), 0, 0, int32(menu.x))
+		menu.lsurface.SetMargin(int32(menu.y), 0, 0, int32(menu.x))
 		menu.surface.Commit()
 		// TODO:
 		// menu.win.SetSize(int32(menu.w), int32(menu.h))
@@ -344,7 +344,7 @@ func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
 		x := menu.w/2 - bottomArrow.Rect.Max.X/2
 		y := item.h/2 - bottomArrow.Rect.Max.Y/2
 
-		draw.DrawMask(img, pixels.Bounds().Add(image.Point{x, y}), color.Foreground, image.Point{}, pixels, image.Point{}, draw.Over)
+		draw.DrawMask(img, pixels.Bounds().Add(image.Point{x, y}), color.Foreground, image.Point{}, pixels, image.Point{}, draw.Src)
 	} else if item.Label != "" {
 		x := menu.ctxmenu.PaddingX + menu.ctxmenu.BorderSize
 		if item.icon != nil {
@@ -458,9 +458,9 @@ func (menu *menuState[T]) close() {
 		menu.surf.Close()
 		menu.surf = nil
 	}
-	if menu.layersurface != nil {
-		menu.layersurface.Destroy()
-		menu.layersurface = nil
+	if menu.lsurface != nil {
+		menu.lsurface.Destroy()
+		menu.lsurface = nil
 	}
 	if menu.surface != nil {
 		menu.surface.Destroy()

@@ -35,8 +35,8 @@
 package proto
 
 import wayland "github.com/friedelschoen/wayland"
-import "fmt"
 import "runtime"
+import "fmt"
 
 // WmBase : create desktop-style surfaces
 //

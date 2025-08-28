@@ -26,6 +26,8 @@ type Config struct {
 	IconSize           int
 	PaddingX, PaddingY int
 	Alignment          Alignment
+
+	DisableIcons bool /* whether to disable icons */
 }
 
 var DefaultConfig = Config{

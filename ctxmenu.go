@@ -19,12 +19,9 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
-type Action int
-
 const (
-	ActionClear Action = 1 << iota /* clear text */
-	ActionMap                      /* remap menu windows */
-	ActionDraw                     /* redraw menu windows */
+	actionClear = 1 << iota /* clear text */
+	actionDraw              /* redraw menu windows */
 )
 
 /* enum for keyboard menu navigation */
@@ -48,11 +45,7 @@ type ContextMenu struct {
 	border    image.Image
 	separator image.Image
 	x, y      int /* initial position */
-
-	font font.Face
-
-	/* flags */
-	disableIcons bool /* whether to disable icons */
+	font      font.Face
 
 	seen bool /* if the cursor is seen above menu */
 
@@ -61,7 +54,7 @@ type ContextMenu struct {
 	registry   *proto.Registry
 	compositor *proto.Compositor
 	seat       *proto.Seat
-	layerShell *proto.LayerShell
+	lshell     *proto.LayerShell
 	shm        *proto.Shm
 	output     *proto.Output
 	pointer    *proto.Pointer
@@ -204,7 +197,7 @@ func (cm *ContextMenu) getPointerPosition() (*proto.WlSurface, *proto.LayerSurfa
 	surf := cm.compositor.CreateSurface(nil)
 
 	var lsurf *proto.LayerSurface
-	lsurf = cm.layerShell.GetLayerSurface(surf, cm.output, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
+	lsurf = cm.lshell.GetLayerSurface(surf, cm.output, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
 		// Listen for configure/closed
 		OnConfigure: func(ev wayland.Event) bool {
 			e := ev.(*proto.LayerSurfaceConfigureEvent)
@@ -281,7 +274,7 @@ eventLoop:
 		if curmenu == nil {
 			continue
 		}
-		var action Action
+		var action int
 		switch ev := event.(type) {
 		case QuitEvent:
 			err = ErrExited
@@ -290,7 +283,7 @@ eventLoop:
 			err = fmt.Errorf("displayerror on %s: %s [%d]\n", ev.ObjectID().Name(), ev.Message(), ev.Code())
 			break eventLoop
 		case *proto.WlSurfaceEnterEvent:
-			action = ActionDraw
+			action = actionDraw
 		case *proto.PointerEnterEvent:
 			if hasleft != nil {
 				hasleft.Stop()
@@ -336,7 +329,7 @@ eventLoop:
 			if item.Label != "" && hover != nil {
 				hover(item.Output)
 			}
-			action = ActionClear | ActionMap | ActionDraw
+			action = actionClear | actionDraw
 		case *proto.PointerAxisEvent:
 			if ev.Axis() != proto.PointerAxisHorizontalScroll {
 				break
@@ -346,11 +339,11 @@ eventLoop:
 			}
 			if ev.Value() < 0 {
 				curmenu.first = max(curmenu.first-1, 0)
-				action = ActionClear | ActionMap | ActionDraw
+				action = actionClear | actionDraw
 				break
 			} else if ev.Value() > 0 {
 				curmenu.first = min(curmenu.first+1, len(curmenu.children)-curmenu.overflow)
-				action = ActionClear | ActionMap | ActionDraw
+				action = actionClear | actionDraw
 				break
 			}
 		case *proto.PointerButtonEvent:
@@ -363,16 +356,16 @@ eventLoop:
 			if item == -1 && ovitem == OverflowNone {
 				curmenu.selected = -1
 				menu.first = 0
-				action = ActionClear | ActionMap | ActionDraw
+				action = actionClear | actionDraw
 				break
 			}
 			if ovitem == OverflowTop {
 				curmenu.first = max(curmenu.first-1, 0)
-				action = ActionClear | ActionMap | ActionDraw
+				action = actionClear | actionDraw
 				break
 			} else if ovitem == OverflowBottom {
 				curmenu.first = min(curmenu.first+1, len(curmenu.children)-curmenu.overflow)
-				action = ActionClear | ActionMap | ActionDraw
+				action = actionClear | actionDraw
 				break
 			}
 			if menu.children[item].Label == "" {
@@ -386,7 +379,7 @@ eventLoop:
 				break eventLoop
 			}
 			curmenu.selected = 0
-			action = ActionClear | ActionMap | ActionDraw
+			action = actionClear | actionDraw
 		case *proto.KeyboardKeymapEvent:
 			if ev.Format() != proto.KeyboardKeymapFormatXkbV1 {
 				log.Printf("unsupported keymap: %v\n", ev.Format())
@@ -430,34 +423,34 @@ eventLoop:
 			switch key.Sym {
 			case xkb.K_Home:
 				curmenu.selected = curmenu.itemcycle(ItemFirst)
-				action = ActionClear | ActionDraw
+				action = actionClear | actionDraw
 			case xkb.K_End:
 				curmenu.selected = curmenu.itemcycle(ItemLast)
-				action = ActionClear | ActionDraw
+				action = actionClear | actionDraw
 			case xkb.K_Tab:
 				if key.Mod&xkb.ModShift > 0 {
 					if len(buf) > 0 {
 						curmenu.selected = curmenu.matchitem(string(buf), -1)
-						action = ActionDraw
+						action = actionDraw
 					} else {
 						curmenu.selected = curmenu.itemcycle(ItemPrev)
-						action = ActionClear | ActionDraw
+						action = actionClear | actionDraw
 					}
 				} else {
 					if len(buf) > 0 {
 						curmenu.selected = curmenu.matchitem(string(buf), 1)
-						action = ActionDraw
+						action = actionDraw
 					} else {
 						curmenu.selected = curmenu.itemcycle(ItemNext)
-						action = ActionClear | ActionDraw
+						action = actionClear | actionDraw
 					}
 				}
 			case xkb.K_Up:
 				curmenu.selected = curmenu.itemcycle(ItemPrev)
-				action = ActionClear | ActionDraw
+				action = actionClear | actionDraw
 			case xkb.K_Down:
 				curmenu.selected = curmenu.itemcycle(ItemNext)
-				action = ActionClear | ActionDraw
+				action = actionClear | actionDraw
 			case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 				item := curmenu.itemcycle(ItemFirst)
 				for range key.Char - '0' {
@@ -465,7 +458,7 @@ eventLoop:
 					item = curmenu.itemcycle(ItemNext)
 				}
 				curmenu.selected = item
-				action = ActionClear | ActionDraw
+				action = actionClear | actionDraw
 			case xkb.K_Return, xkb.K_Right:
 				if curmenu.selected != -1 {
 					if curmenu.children[curmenu.selected].Label == "" {
@@ -479,16 +472,16 @@ eventLoop:
 						break eventLoop
 					}
 					curmenu.selected = 0
-					action = ActionClear | ActionMap | ActionDraw
+					action = actionClear | actionDraw
 				}
 			case xkb.K_Escape, xkb.K_Left:
 				if curmenu.caller != nil {
 					curmenu.selected = curmenu.caller.selected
 					curmenu = curmenu.caller
-					action = ActionClear | ActionMap | ActionDraw
+					action = actionClear | actionDraw
 				}
 			case xkb.K_BackSpace, xkb.K_Clear, xkb.K_Delete:
-				action = ActionClear | ActionDraw
+				action = actionClear | actionDraw
 			default:
 				if !unicode.IsPrint(rune(key.Sym)) {
 					break
@@ -500,13 +493,13 @@ eventLoop:
 					}
 					buf = buf[:0]
 				}
-				action = ActionDraw
+				action = actionDraw
 			}
 		}
-		if action&ActionClear != 0 {
+		if action&actionClear != 0 {
 			buf = buf[:0]
 		}
-		if action&ActionDraw != 0 {
+		if action&actionDraw != 0 {
 			curmenu.draw()
 		}
 	}
@@ -602,7 +595,7 @@ func initContext(conf *Config, wlDisplay string, drain chan<- wayland.Event) (*C
 			return true
 		},
 	})
-	ctxmenu.layerShell = proto.NewLayerShell()
+	ctxmenu.lshell = proto.NewLayerShell()
 	ctxmenu.output = proto.NewOutput(&proto.OutputHandlers{
 		OnGeometry: func(evt wayland.Event) bool {
 			e := evt.(*proto.OutputGeometryEvent)
@@ -616,7 +609,7 @@ func initContext(conf *Config, wlDisplay string, drain chan<- wayland.Event) (*C
 		},
 	})
 	reg := wayland.Registrar{}
-	reg.Add(ctxmenu.compositor, ctxmenu.shm, ctxmenu.seat, ctxmenu.layerShell, ctxmenu.output)
+	reg.Add(ctxmenu.compositor, ctxmenu.shm, ctxmenu.seat, ctxmenu.lshell, ctxmenu.output)
 
 	// Get global interfaces registry
 	ctxmenu.registry = ctxmenu.display.GetRegistry(&proto.RegistryHandlers{
