@@ -61,6 +61,7 @@ func (img *SurfaceImage) Resize(newrect image.Rectangle) {
 	if newsize <= img.size {
 		img.size = newsize
 		img.Rect = newrect
+		img.Stride = 4 * newrect.Dx()
 		return
 	}
 
@@ -76,6 +77,7 @@ func (img *SurfaceImage) Resize(newrect image.Rectangle) {
 
 	img.size = newsize
 	img.Rect = newrect
+	img.Stride = 4 * newrect.Dx()
 }
 
 func (img *SurfaceImage) Buffer() *proto.Buffer {

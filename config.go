@@ -27,12 +27,17 @@ type Config struct {
 	PaddingX, PaddingY int
 	Alignment          Alignment
 
+	OverflowArrowHeight int
+	OverflowArrowMargin int
+	SubmenuArrowWidth   int
+	SubmenuArrowMargin  int
+
 	DisableIcons bool /* whether to disable icons */
 }
 
 var DefaultConfig = Config{
 	/* font, separate different fonts with comma */
-	FontName: "monospace:size=12",
+	FontName: "Go Mono:size=12",
 
 	/* colors */
 	BackgroundColor:    "#FFFFFF",
@@ -46,6 +51,11 @@ var DefaultConfig = Config{
 	MinItemWidth:    130, /* minimum width of a menu */
 	BorderSize:      1,   /* menu border */
 	SeperatorLength: 3,   /* space around separator */
+
+	OverflowArrowHeight: 7,
+	OverflowArrowMargin: 3,
+	SubmenuArrowWidth:   10,
+	SubmenuArrowMargin:  3,
 
 	/* text alignment, set to LeftAlignment, CenterAlignment or RightAlignment */
 	Alignment: AlignLeft,

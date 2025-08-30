@@ -154,7 +154,7 @@ func (ctxmenu *ContextMenu) drawText(dest draw.Image, text string) int {
 	return dot.X.Ceil()
 }
 
-func (ctxmenu *ContextMenu) messureText(text string) int {
+func (ctxmenu *ContextMenu) measureText(text string) int {
 	prev := rune(-1)
 	width := fixed.Int26_6(0)
 	for _, chr := range text {
@@ -231,7 +231,8 @@ func Run[T comparable](items Menu[T], conf *Config, wlDisplay string, hover func
 	if conf == nil {
 		conf = &DefaultConfig
 	}
-	/* event queue with a buffer of 64 */
+
+	/* event queue with a buffer of 128, we really don't want events to kill the event-thread */
 	events := make(chan wayland.Event, 128)
 
 	ctxmenu, err := initContext(conf, wlDisplay, events)
@@ -241,7 +242,7 @@ func Run[T comparable](items Menu[T], conf *Config, wlDisplay string, hover func
 
 	pointerpos, layerpos := ctxmenu.getPointerPosition()
 
-	rootmenu, err := items.makeMenu(ctxmenu)
+	rootmenu, err := items.makeMenu(ctxmenu, nil)
 	if err != nil {
 		return ret, err
 	}
@@ -264,7 +265,7 @@ eventLoop:
 				pointerpos.Destroy()
 				pointerpos = nil
 				curmenu = rootmenu
-				if err := rootmenu.show(nil); err != nil {
+				if err := rootmenu.show(); err != nil {
 					break eventLoop
 				}
 				rootmenu.draw()
@@ -326,7 +327,7 @@ eventLoop:
 			}
 			curmenu.hideChildren(nil)
 			if item.submenu != nil {
-				item.submenu.show(curmenu)
+				item.submenu.show()
 				item.submenu.draw()
 			}
 			if item.Label != "" && hover != nil {
@@ -376,7 +377,7 @@ eventLoop:
 			}
 			if menu.children[item].submenu != nil {
 				curmenu = menu.children[item].submenu
-				curmenu.show(menu)
+				curmenu.show()
 			} else {
 				ret, werr = menu.children[item].Output, nil
 				break eventLoop
@@ -417,7 +418,7 @@ eventLoop:
 			}
 
 			/* esc closes ctxmenu when current menu is the root menu */
-			if key.Sym == xkb.K_Escape && curmenu.caller == nil {
+			if key.Sym == xkb.K_Escape && curmenu.parent == nil {
 				werr = ErrExited
 				break eventLoop
 			}
@@ -469,7 +470,7 @@ eventLoop:
 					}
 					if curmenu.children[curmenu.selected].submenu != nil {
 						curmenu = curmenu.children[curmenu.selected].submenu
-						curmenu.show(curmenu)
+						curmenu.show()
 					} else {
 						ret, werr = curmenu.children[curmenu.selected].Output, nil
 						break eventLoop
@@ -478,9 +479,9 @@ eventLoop:
 					action = actionClear | actionDraw
 				}
 			case xkb.K_Escape, xkb.K_Left:
-				if curmenu.caller != nil {
-					curmenu.selected = curmenu.caller.selected
-					curmenu = curmenu.caller
+				if curmenu.parent != nil {
+					curmenu.selected = curmenu.parent.menu.selected
+					curmenu = curmenu.parent.menu
 					action = actionClear | actionDraw
 				}
 			case xkb.K_BackSpace, xkb.K_Clear, xkb.K_Delete:
@@ -509,6 +510,9 @@ eventLoop:
 
 	for m := range rootmenu.seq() {
 		m.close()
+	}
+	if kb != nil {
+		kb.Close()
 	}
 
 	return

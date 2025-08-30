@@ -31,8 +31,8 @@ const (
 )
 
 type Item[T comparable] struct {
-	Label     string /* string to be drawed on menu */
-	Output    T      /* string to be outputed when item is clicked */
+	Label     string /* string to be drawn on menu */
+	Output    T      /* string to be output when item is clicked */
 	Imagefile string
 	SubMenu   Menu[T]
 }
@@ -42,7 +42,7 @@ type Menu[T comparable] []Item[T]
 /* itemState is an element inside a Menu */
 type itemState[T comparable] struct {
 	Item[T]
-	parent     *menuState[T] /* parent */
+	menu       *menuState[T] /* parent */
 	labeltex   draw.Image
 	submenu    *menuState[T] /* submenu spawned by clicking on item */
 	icon       draw.Image
@@ -53,6 +53,7 @@ type itemState[T comparable] struct {
 
 /* menuState is a menuState- or submenu-window */
 type menuState[T comparable] struct {
+	parent       *itemState[T]   /* current parent of this window, nil if root-window */
 	children     []*itemState[T] /* list of items contained by the menu */
 	ctxmenu      *ContextMenu    /* context */
 	first        int             /* index of first element, if scrolled */
@@ -60,7 +61,6 @@ type menuState[T comparable] struct {
 	overflow     int             /* index of first item out of sight, -1 if not overflowing */
 	x, y         int             /* menu position */
 	w, h         int             /* geometry */
-	caller       *menuState[T]   /* current parent of this window, nil if root-window */
 	itemsChanged bool            /* if the boundaries require updating */
 
 	overflowItemTop    *itemState[T]
@@ -87,10 +87,10 @@ func getDecoder(imagepath string) (func(io.Reader) (image.Image, error), error) 
 	}
 }
 
-func (items Menu[T]) makeMenu(ctxmenu *ContextMenu) (*menuState[T], error) {
-	// XSetWindowAttributes swa;
+func (items Menu[T]) makeMenu(ctxmenu *ContextMenu, parent *itemState[T]) (*menuState[T], error) {
 	menu := menuState[T]{
 		ctxmenu: ctxmenu,
+		parent:  parent,
 	}
 	menu.x = -1
 	menu.y = -1
@@ -108,8 +108,8 @@ func (items Menu[T]) makeMenu(ctxmenu *ContextMenu) (*menuState[T], error) {
 			return nil, err
 		}
 		if len(item.SubMenu) > 0 {
-			menu.children[i].w += rightArrow.Rect.Max.X
-			menu.children[i].submenu, err = item.SubMenu.makeMenu(ctxmenu)
+			menu.children[i].w += ctxmenu.SubmenuArrowWidth
+			menu.children[i].submenu, err = item.SubMenu.makeMenu(ctxmenu, menu.children[i])
 			if err != nil {
 				return nil, err
 			}
@@ -120,8 +120,8 @@ func (items Menu[T]) makeMenu(ctxmenu *ContextMenu) (*menuState[T], error) {
 
 func (menu *menuState[T]) makeItem(orig Item[T]) (*itemState[T], error) {
 	item := itemState[T]{
-		Item:   orig,
-		parent: menu,
+		Item: orig,
+		menu: menu,
 	}
 
 	item.w = menu.ctxmenu.PaddingX * 2
@@ -131,7 +131,7 @@ func (menu *menuState[T]) makeItem(orig Item[T]) (*itemState[T], error) {
 		return &item, nil
 	}
 
-	item.w += menu.ctxmenu.messureText(item.Label)
+	item.w += menu.ctxmenu.measureText(item.Label)
 	item.h = menu.ctxmenu.font.Metrics().Height.Ceil() + menu.ctxmenu.PaddingY*2
 
 	/* try to load icon */
@@ -145,6 +145,7 @@ func (menu *menuState[T]) makeItem(orig Item[T]) (*itemState[T], error) {
 		if err != nil {
 			return nil, err
 		}
+		defer r.Close()
 		img, err := dec(r)
 		if err != nil {
 			return nil, err
@@ -163,15 +164,15 @@ func (menu *menuState[T]) makeItem(orig Item[T]) (*itemState[T], error) {
 
 func (menu *menuState[T]) makeOverflow(top bool) *itemState[T] {
 	item := itemState[T]{
-		parent: menu,
+		menu: menu,
 	}
 
 	item.overflower = OverflowBottom
 	if top {
 		item.overflower = OverflowTop
 	}
-	item.w = bottomArrow.Rect.Max.X + menu.ctxmenu.PaddingX*2
-	item.h = bottomArrow.Rect.Max.Y + menu.ctxmenu.PaddingY*2
+	item.w = 0
+	item.h = menu.ctxmenu.OverflowArrowHeight + menu.ctxmenu.PaddingY*2
 	return &item
 }
 
@@ -234,13 +235,10 @@ func (menu *menuState[T]) updateWindow() error {
 }
 
 /* setup the position of a menu */
-func (menu *menuState[T]) show(caller *menuState[T]) error {
-	if caller == menu {
-		caller = nil
-	}
+func (menu *menuState[T]) show() error {
 	menu.hideChildren(nil)
-	if caller != nil {
-		caller.hideChildren(menu)
+	if menu.parent != nil {
+		menu.parent.menu.hideChildren(menu)
 	}
 
 	mr := menu.ctxmenu.Monitor()
@@ -259,7 +257,7 @@ func (menu *menuState[T]) show(caller *menuState[T]) error {
 
 		if menu.h > mr.Max.Y {
 			/* both arrow items */
-			menu.h = (bottomArrow.Rect.Max.Y + menu.ctxmenu.PaddingY*2 + menu.ctxmenu.BorderSize) * 2
+			menu.h = (menu.ctxmenu.OverflowArrowHeight + menu.ctxmenu.PaddingY*2 + menu.ctxmenu.BorderSize) * 2
 			for i, item := range menu.children {
 				if item.h+menu.h > mr.Max.Y {
 					menu.overflow = i
@@ -271,23 +269,23 @@ func (menu *menuState[T]) show(caller *menuState[T]) error {
 		}
 	}
 
-	if caller != nil && menu.caller != caller {
-		menu.caller = caller
-		menu.x = caller.x + caller.w
+	if menu.parent != nil {
+		parent := menu.parent.menu
+		menu.x = parent.x + parent.w
 
 		if menu.x < mr.Min.X {
 			menu.x = mr.Min.X
 		} else if menu.x+menu.w > mr.Max.X {
-			menu.x = caller.x - menu.w
+			menu.x = parent.x - menu.w
 		}
 		if menu.overflow == -1 {
-			menu.y = caller.y
+			menu.y = parent.y
 			start := 0
-			if caller.overflow != -1 {
-				start = caller.first
+			if parent.overflow != -1 {
+				start = parent.first
 			}
-			for i := start; i < caller.selected; i++ {
-				menu.y += caller.children[i].h
+			for i := start; i < parent.selected; i++ {
+				menu.y += parent.children[i].h
 			}
 		}
 	} else if menu.x == -1 || menu.y == -1 {
@@ -323,9 +321,6 @@ func (menu *menuState[T]) hideChildren(except *menuState[T]) {
 
 /* draw overflow button */
 func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
-	// x := menu.ctxmenu.vertpadding
-	// y += menu.ctxmenu.horzpadding
-
 	color := menu.ctxmenu.normal
 	if index != -1 && index == menu.selected {
 		color = menu.ctxmenu.selected
@@ -336,15 +331,14 @@ func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
 	draw.Draw(img, img.Bounds(), color.Background, image.Point{}, draw.Src)
 
 	if item.overflower != OverflowNone {
-		pixels := topArrow
+		dir := DirUp
 		if item.overflower == OverflowBottom {
-			pixels = bottomArrow
+			dir = DirDown
 		}
 
-		x := menu.w/2 - bottomArrow.Rect.Max.X/2
-		y := item.h/2 - bottomArrow.Rect.Max.Y/2
-
-		draw.DrawMask(img, pixels.Bounds().Add(image.Point{x, y}), color.Foreground, image.Point{}, pixels, image.Point{}, draw.Src)
+		m := menu.ctxmenu.OverflowArrowMargin
+		r := image.Rect(m, m, menu.w-m, item.h-m)
+		DrawArrow(img, r, color.Foreground, image.Point{}, dir)
 	} else if item.Label != "" {
 		x := menu.ctxmenu.PaddingX + menu.ctxmenu.BorderSize
 		if item.icon != nil {
@@ -352,7 +346,7 @@ func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
 		}
 
 		textH := menu.ctxmenu.font.Metrics().Height.Ceil()
-		textW := menu.ctxmenu.messureText(item.Label)
+		textW := menu.ctxmenu.measureText(item.Label)
 		if item.labeltex == nil {
 			item.labeltex = image.NewAlpha(image.Rect(0, 0, textW, textH))
 			menu.ctxmenu.drawText(item.labeltex, item.Label)
@@ -362,9 +356,9 @@ func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
 		draw.DrawMask(img, item.labeltex.Bounds().Add(image.Point{x, textY}), color.Foreground, image.Point{}, item.labeltex, image.Point{}, draw.Over)
 
 		if item.submenu != nil {
-			x := menu.w - rightArrow.Rect.Max.X - menu.ctxmenu.BorderSize - menu.ctxmenu.PaddingX
-			y := item.h/2 - rightArrow.Rect.Max.Y/2
-			draw.DrawMask(img, rightArrow.Bounds().Add(image.Point{x, y}), color.Foreground, image.Point{}, rightArrow, image.Point{}, draw.Over)
+			x := menu.w - menu.ctxmenu.SubmenuArrowWidth - menu.ctxmenu.SubmenuArrowMargin - menu.ctxmenu.BorderSize - menu.ctxmenu.PaddingX
+
+			DrawArrow(img, image.Rect(x, y, x+menu.ctxmenu.SubmenuArrowWidth, y+item.h-menu.ctxmenu.SubmenuArrowMargin*2), color.Foreground, image.Point{}, DirRight)
 		}
 
 		if item.icon != nil {
