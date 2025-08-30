@@ -53,7 +53,7 @@ var DefaultConfig = Config{
 	SeperatorLength: 3,   /* space around separator */
 
 	OverflowArrowHeight: 7,
-	OverflowArrowMargin: 3,
+	OverflowArrowMargin: 5,
 	SubmenuArrowWidth:   10,
 	SubmenuArrowMargin:  3,
 

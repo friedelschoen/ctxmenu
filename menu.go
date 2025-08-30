@@ -11,24 +11,14 @@ import (
 	"io"
 	"iter"
 	"log"
-	"os"
 	"path"
 	"strings"
 
 	"github.com/friedelschoen/ctxmenu/proto"
 	"github.com/friedelschoen/wayland"
-	xdraw "golang.org/x/image/draw"
 )
 
 var ErrExited = errors.New("quit-request received")
-
-type OverflowItem int
-
-const (
-	OverflowTop OverflowItem = iota - 1
-	OverflowNone
-	OverflowBottom
-)
 
 type Item[T comparable] struct {
 	Label     string /* string to be drawn on menu */
@@ -39,32 +29,20 @@ type Item[T comparable] struct {
 
 type Menu[T comparable] []Item[T]
 
-/* itemState is an element inside a Menu */
-type itemState[T comparable] struct {
-	Item[T]
-	menu       *menuState[T] /* parent */
-	labeltex   draw.Image
-	submenu    *menuState[T] /* submenu spawned by clicking on item */
-	icon       draw.Image
-	overflower OverflowItem
-
-	w, h int /* item geometry */
-}
-
 /* menuState is a menuState- or submenu-window */
 type menuState[T comparable] struct {
-	parent       *itemState[T]   /* current parent of this window, nil if root-window */
-	children     []*itemState[T] /* list of items contained by the menu */
-	ctxmenu      *ContextMenu    /* context */
-	first        int             /* index of first element, if scrolled */
-	selected     int             /* index of item currently selected in the menu */
-	overflow     int             /* index of first item out of sight, -1 if not overflowing */
-	x, y         int             /* menu position */
-	w, h         int             /* geometry */
-	itemsChanged bool            /* if the boundaries require updating */
+	parent       itemState[T]   /* current parent of this window, nil if root-window */
+	children     []itemState[T] /* list of items contained by the menu */
+	ctxmenu      *ContextMenu   /* context */
+	first        int            /* index of first element, if scrolled */
+	selected     int            /* index of item currently selected in the menu */
+	overflow     int            /* index of first item out of sight, -1 if not overflowing */
+	x, y         int            /* menu position */
+	w, h         int            /* geometry */
+	itemsChanged bool           /* if the boundaries require updating */
 
-	overflowItemTop    *itemState[T]
-	overflowItemBottom *itemState[T]
+	overflowItemTop    itemState[T]
+	overflowItemBottom itemState[T]
 
 	exit     bool
 	surface  *proto.WlSurface
@@ -87,8 +65,8 @@ func getDecoder(imagepath string) (func(io.Reader) (image.Image, error), error) 
 	}
 }
 
-func (items Menu[T]) makeMenu(ctxmenu *ContextMenu, parent *itemState[T]) (*menuState[T], error) {
-	menu := menuState[T]{
+func (items Menu[T]) makeMenu(ctxmenu *ContextMenu, parent itemState[T]) (*menuState[T], error) {
+	menu := &menuState[T]{
 		ctxmenu: ctxmenu,
 		parent:  parent,
 	}
@@ -96,84 +74,19 @@ func (items Menu[T]) makeMenu(ctxmenu *ContextMenu, parent *itemState[T]) (*menu
 	menu.y = -1
 
 	/* ignoring error as an error only happens with icons */
-	menu.overflowItemTop = menu.makeOverflow(true)
-	menu.overflowItemBottom = menu.makeOverflow(false)
+	menu.overflowItemTop = newOverflowItem(menu, DirUp)
+	menu.overflowItemBottom = newOverflowItem(menu, DirDown)
 
 	menu.itemsChanged = true
-	menu.children = make([]*itemState[T], len(items))
+	menu.children = make([]itemState[T], len(items))
 	for i, item := range items {
 		var err error
-		menu.children[i], err = menu.makeItem(item)
+		menu.children[i], err = newLabelItem(menu, item)
 		if err != nil {
 			return nil, err
 		}
-		if len(item.SubMenu) > 0 {
-			menu.children[i].w += ctxmenu.SubmenuArrowWidth
-			menu.children[i].submenu, err = item.SubMenu.makeMenu(ctxmenu, menu.children[i])
-			if err != nil {
-				return nil, err
-			}
-		}
 	}
-	return &menu, nil
-}
-
-func (menu *menuState[T]) makeItem(orig Item[T]) (*itemState[T], error) {
-	item := itemState[T]{
-		Item: orig,
-		menu: menu,
-	}
-
-	item.w = menu.ctxmenu.PaddingX * 2
-
-	if item.Label == "" {
-		item.h = 1 + menu.ctxmenu.PaddingY*2
-		return &item, nil
-	}
-
-	item.w += menu.ctxmenu.measureText(item.Label)
-	item.h = menu.ctxmenu.font.Metrics().Height.Ceil() + menu.ctxmenu.PaddingY*2
-
-	/* try to load icon */
-	if item.Imagefile != "" && !menu.ctxmenu.DisableIcons {
-		dec, err := getDecoder(item.Imagefile)
-		if err != nil {
-			return nil, err
-		}
-
-		r, err := os.Open(item.Imagefile)
-		if err != nil {
-			return nil, err
-		}
-		defer r.Close()
-		img, err := dec(r)
-		if err != nil {
-			return nil, err
-		}
-
-		dst := image.NewRGBA(image.Rect(0, 0, menu.ctxmenu.IconSize, menu.ctxmenu.IconSize))
-		item.icon = dst
-
-		// Ugh, NearestNeighbor is ugly... but really fast and suits the case as I want to create small 30x30 (or so) icons
-		xdraw.NearestNeighbor.Scale(dst, dst.Rect, img, img.Bounds(), draw.Src, nil)
-		item.w += menu.ctxmenu.IconSize + menu.ctxmenu.PaddingX
-		item.h = max(item.h, menu.ctxmenu.IconSize+menu.ctxmenu.PaddingY*2)
-	}
-	return &item, nil
-}
-
-func (menu *menuState[T]) makeOverflow(top bool) *itemState[T] {
-	item := itemState[T]{
-		menu: menu,
-	}
-
-	item.overflower = OverflowBottom
-	if top {
-		item.overflower = OverflowTop
-	}
-	item.w = 0
-	item.h = menu.ctxmenu.OverflowArrowHeight + menu.ctxmenu.PaddingY*2
-	return &item
+	return menu, nil
 }
 
 func (menu *menuState[T]) updateWindow() error {
@@ -238,7 +151,7 @@ func (menu *menuState[T]) updateWindow() error {
 func (menu *menuState[T]) show() error {
 	menu.hideChildren(nil)
 	if menu.parent != nil {
-		menu.parent.menu.hideChildren(menu)
+		menu.parent.Parent().hideChildren(menu)
 	}
 
 	mr := menu.ctxmenu.Monitor()
@@ -251,26 +164,28 @@ func (menu *menuState[T]) show() error {
 		menu.overflow = -1
 
 		for _, item := range menu.children {
-			menu.w = max(menu.w, item.w)
-			menu.h += item.h
+			w, h := item.Geometry()
+			menu.w = max(menu.w, w)
+			menu.h += h
 		}
 
 		if menu.h > mr.Max.Y {
 			/* both arrow items */
 			menu.h = (menu.ctxmenu.OverflowArrowHeight + menu.ctxmenu.PaddingY*2 + menu.ctxmenu.BorderSize) * 2
 			for i, item := range menu.children {
-				if item.h+menu.h > mr.Max.Y {
+				w, h := item.Geometry()
+				if h+menu.h > mr.Max.Y {
 					menu.overflow = i
 					break
 				}
-				menu.w = max(menu.w, item.w)
-				menu.h += item.h
+				menu.w = max(menu.w, w)
+				menu.h += h
 			}
 		}
 	}
 
 	if menu.parent != nil {
-		parent := menu.parent.menu
+		parent := menu.parent.Parent()
 		menu.x = parent.x + parent.w
 
 		if menu.x < mr.Min.X {
@@ -285,7 +200,8 @@ func (menu *menuState[T]) show() error {
 				start = parent.first
 			}
 			for i := start; i < parent.selected; i++ {
-				menu.y += parent.children[i].h
+				_, h := parent.children[i].Geometry()
+				menu.y += h
 			}
 		}
 	} else if menu.x == -1 || menu.y == -1 {
@@ -313,69 +229,28 @@ func (menu *menuState[T]) show() error {
 
 func (menu *menuState[T]) hideChildren(except *menuState[T]) {
 	for _, item := range menu.children {
-		if item.submenu != nil && item.submenu != except {
-			item.submenu.close()
+		if item.GetSubMenu() != nil && item.GetSubMenu() != except {
+			item.GetSubMenu().close()
 		}
 	}
 }
 
 /* draw overflow button */
-func (menu *menuState[T]) drawItem(y int, index int, item *itemState[T]) error {
+func (menu *menuState[T]) drawItem(y int, index int, item itemState[T]) error {
 	color := menu.ctxmenu.normal
 	if index != -1 && index == menu.selected {
 		color = menu.ctxmenu.selected
 	}
 
-	img := &SubImage{menu.surf, image.Rect(0, y, menu.w, y+item.h)}
+	_, h := item.Geometry()
+	r := image.Rect(0, y, menu.w, y+h)
 
-	draw.Draw(img, img.Bounds(), color.Background, image.Point{}, draw.Src)
-
-	if item.overflower != OverflowNone {
-		dir := DirUp
-		if item.overflower == OverflowBottom {
-			dir = DirDown
-		}
-
-		m := menu.ctxmenu.OverflowArrowMargin
-		r := image.Rect(m, m, menu.w-m, item.h-m)
-		DrawArrow(img, r, color.Foreground, image.Point{}, dir)
-	} else if item.Label != "" {
-		x := menu.ctxmenu.PaddingX + menu.ctxmenu.BorderSize
-		if item.icon != nil {
-			x += menu.ctxmenu.IconSize + menu.ctxmenu.PaddingX
-		}
-
-		textH := menu.ctxmenu.font.Metrics().Height.Ceil()
-		textW := menu.ctxmenu.measureText(item.Label)
-		if item.labeltex == nil {
-			item.labeltex = image.NewAlpha(image.Rect(0, 0, textW, textH))
-			menu.ctxmenu.drawText(item.labeltex, item.Label)
-		}
-		textY := item.h/2 - textH/2
-
-		draw.DrawMask(img, item.labeltex.Bounds().Add(image.Point{x, textY}), color.Foreground, image.Point{}, item.labeltex, image.Point{}, draw.Over)
-
-		if item.submenu != nil {
-			x := menu.w - menu.ctxmenu.SubmenuArrowWidth - menu.ctxmenu.SubmenuArrowMargin - menu.ctxmenu.BorderSize - menu.ctxmenu.PaddingX
-
-			DrawArrow(img, image.Rect(x, y, x+menu.ctxmenu.SubmenuArrowWidth, y+item.h-menu.ctxmenu.SubmenuArrowMargin*2), color.Foreground, image.Point{}, DirRight)
-		}
-
-		if item.icon != nil {
-			x := menu.ctxmenu.BorderSize + menu.ctxmenu.PaddingX
-			y := item.h/2 - menu.ctxmenu.IconSize/2
-			draw.Draw(img, image.Rect(x, y, x+menu.ctxmenu.IconSize, y+menu.ctxmenu.IconSize), item.icon, image.Point{}, draw.Over)
-		}
-	} else {
-		x := menu.ctxmenu.BorderSize + menu.ctxmenu.PaddingX + menu.ctxmenu.SeperatorLength
-		y := menu.ctxmenu.PaddingY
-		draw.Draw(img, image.Rect(x, y, x+menu.w-x*2, y+1), menu.ctxmenu.separator, image.Point{}, draw.Src)
-	}
+	item.Draw(menu.surf, r, color)
 	return nil
 }
 
-func (menu *menuState[T]) visibleItems(withOverflow bool) iter.Seq2[int, *itemState[T]] {
-	return func(yield func(int, *itemState[T]) bool) {
+func (menu *menuState[T]) visibleItems(withOverflow bool) iter.Seq2[int, itemState[T]] {
+	return func(yield func(int, itemState[T]) bool) {
 		if withOverflow && menu.overflow != -1 {
 			if !yield(-1, menu.overflowItemTop) {
 				return
@@ -406,7 +281,8 @@ func (menu *menuState[T]) draw() {
 
 	for i, item := range menu.visibleItems(true) {
 		menu.drawItem(y, i, item)
-		y += item.h
+		_, h := item.Geometry()
+		y += h
 	}
 
 	bw := menu.ctxmenu.BorderSize
@@ -431,8 +307,8 @@ func (menu *menuState[T]) draw() {
 /* feeds itself and recursivly children to `yield` and returns if yield wants more data */
 func (menu *menuState[T]) feed(yield func(*menuState[T]) bool) bool {
 	for _, item := range menu.children {
-		if item.submenu != nil {
-			if !item.submenu.feed(yield) {
+		if item.GetSubMenu() != nil {
+			if !item.GetSubMenu().feed(yield) {
 				return false
 			}
 		}
@@ -467,37 +343,41 @@ func (menu *menuState[T]) getitem(target int) int {
 	y := menu.ctxmenu.BorderSize
 
 	for i, item := range menu.visibleItems(true) {
-		if i != -1 && y <= target && target < y+item.h {
+		_, h := item.Geometry()
+		if i != -1 && y <= target && target < y+h {
 			return i
 		}
-		y += item.h
+		y += h
 	}
 
 	return -1
 }
 
-func (menu *menuState[T]) isoverflowitem(target int) OverflowItem {
+func (menu *menuState[T]) isoverflowitem(target int) itemState[T] {
 	if menu == nil || menu.overflow == -1 {
-		return OverflowNone
+		return nil
 	}
 	y := menu.ctxmenu.BorderSize
 
 	item := menu.overflowItemTop
-	if y <= target && target < y+item.h {
-		return OverflowTop
+	_, h := item.Geometry()
+	if y <= target && target < y+h {
+		return menu.overflowItemTop
 	}
-	y += item.h
+	y += h
 
 	for _, item := range menu.visibleItems(false) {
-		y += item.h
+		_, h := item.Geometry()
+		y += h
 	}
 
 	item = menu.overflowItemBottom
-	if y <= target && target < y+item.h {
-		return OverflowBottom
+	_, h = item.Geometry()
+	if y <= target && target < y+h {
+		return menu.overflowItemBottom
 	}
 
-	return OverflowNone
+	return nil
 }
 
 /* cycle through the items; non-zero direction is next, zero is prev */
@@ -530,18 +410,18 @@ func (menu *menuState[T]) itemcycle(direction int) int {
 	switch direction {
 	case ItemNext:
 	case ItemFirst:
-		for item < len(menu.children) && menu.children[item].Label == "" {
+		for item < len(menu.children) && !menu.children[item].Selectable() {
 			item++
 		}
-		if menu.children[item].Label == "" {
+		if !menu.children[item].Selectable() {
 			item = 0
 		}
 	case ItemPrev:
 	case ItemLast:
-		for item >= 0 && menu.children[item].Label == "" {
+		for item >= 0 && !menu.children[item].Selectable() {
 			item--
 		}
-		if menu.children[item].Label == "" {
+		if !menu.children[item].Selectable() {
 			item = len(menu.children) - 1
 		}
 	}
@@ -550,52 +430,51 @@ func (menu *menuState[T]) itemcycle(direction int) int {
 
 /* get item in menu matching text from given direction (or from beginning, if dir = 0) */
 func (menu *menuState[T]) matchitem(text string, dir int) int {
-	// struct Item *item, *lastitem;
-	dirinc := 0
-	switch {
-	case dir < 0:
-		dirinc = -1
-	case dir >= 0:
-		dirinc = 1
-	}
+	// dirinc := 0
+	// switch {
+	// case dir < 0:
+	// 	dirinc = -1
+	// case dir >= 0:
+	// 	dirinc = 1
+	// }
 
-	item := -1
-	if dir < 0 {
-		if menu.selected != -1 && menu.selected > 0 {
-			item = menu.selected - 1
-		} else {
-			item = len(menu.children) - 1
-		}
-	} else if dir > 0 {
-		if menu.selected != -1 && menu.selected < len(menu.children)-1 {
-			item = menu.selected + 1
-		} else {
-			item = 0
-		}
-	} else {
-		item = 0
-	}
-	/* find next item from selected item */
+	// item := -1
+	// if dir < 0 {
+	// 	if menu.selected != -1 && menu.selected > 0 {
+	// 		item = menu.selected - 1
+	// 	} else {
+	// 		item = len(menu.children) - 1
+	// 	}
+	// } else if dir > 0 {
+	// 	if menu.selected != -1 && menu.selected < len(menu.children)-1 {
+	// 		item = menu.selected + 1
+	// 	} else {
+	// 		item = 0
+	// 	}
+	// } else {
+	// 	item = 0
+	// }
+	// /* find next item from selected item */
 
-	for ; item >= 0 && item < len(menu.children); item += dirinc {
-		for s := menu.children[item].Label; len(s) > 0; s = s[1:] {
-			if s == text {
-				return item
-			}
-		}
-	}
-	/* if not found, try to find from the beginning/end of list */
-	if dir > 0 {
-		item = 0
-	} else {
-		item = len(menu.children) - 1
-	}
-	for ; item >= 0 && item < len(menu.children); item += dirinc {
-		for s := menu.children[item].Label; len(s) > 0; s = s[1:] {
-			if s == text {
-				return item
-			}
-		}
-	}
+	// for ; item >= 0 && item < len(menu.children); item += dirinc {
+	// 	for s := menu.children[item].Label; len(s) > 0; s = s[1:] {
+	// 		if s == text {
+	// 			return item
+	// 		}
+	// 	}
+	// }
+	// /* if not found, try to find from the beginning/end of list */
+	// if dir > 0 {
+	// 	item = 0
+	// } else {
+	// 	item = len(menu.children) - 1
+	// }
+	// for ; item >= 0 && item < len(menu.children); item += dirinc {
+	// 	for s := menu.children[item].Label; len(s) > 0; s = s[1:] {
+	// 		if s == text {
+	// 			return item
+	// 		}
+	// 	}
+	// }
 	return -1
 }

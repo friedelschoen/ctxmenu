@@ -249,7 +249,7 @@ func Run[T comparable](items Menu[T], conf *Config, wlDisplay string, hover func
 
 	var curmenu *menuState[T]
 	var buf []byte
-	var previtem *itemState[T]
+	var previtem itemState[T]
 	// curmenu.selected := -1
 	var hasleft *time.Timer
 	var kb *xkb.Keyboard
@@ -320,18 +320,18 @@ eventLoop:
 			}
 			rootmenu.ctxmenu.seen = true
 			previtem = item
-			if item.Label == "" {
+			if !item.Selectable() {
 				curmenu.selected = -1
 			} else {
 				curmenu.selected = itemidx
 			}
 			curmenu.hideChildren(nil)
-			if item.submenu != nil {
-				item.submenu.show()
-				item.submenu.draw()
+			if item.GetSubMenu() != nil {
+				item.GetSubMenu().show()
+				item.GetSubMenu().draw()
 			}
-			if item.Label != "" && hover != nil {
-				hover(item.Output)
+			if hover != nil {
+				hover(item.Id())
 			}
 			action = actionClear | actionDraw
 		case *proto.PointerAxisEvent:
@@ -357,29 +357,29 @@ eventLoop:
 			menu := curmenu
 			item := menu.getitem(curY)
 			ovitem := menu.isoverflowitem(curY)
-			if item == -1 && ovitem == OverflowNone {
+			if item == -1 && ovitem == nil {
 				curmenu.selected = -1
 				menu.first = 0
 				action = actionClear | actionDraw
 				break
 			}
-			if ovitem == OverflowTop {
+			if ovitem == curmenu.overflowItemTop {
 				curmenu.first = max(curmenu.first-1, 0)
 				action = actionClear | actionDraw
 				break
-			} else if ovitem == OverflowBottom {
+			} else if ovitem == curmenu.overflowItemBottom {
 				curmenu.first = min(curmenu.first+1, len(curmenu.children)-curmenu.overflow)
 				action = actionClear | actionDraw
 				break
 			}
-			if menu.children[item].Label == "" {
+			if !menu.children[item].Selectable() {
 				break /* ignore separators */
 			}
-			if menu.children[item].submenu != nil {
-				curmenu = menu.children[item].submenu
+			if menu.children[item].GetSubMenu() != nil {
+				curmenu = menu.children[item].GetSubMenu()
 				curmenu.show()
 			} else {
-				ret, werr = menu.children[item].Output, nil
+				ret, werr = menu.children[item].Id(), nil
 				break eventLoop
 			}
 			curmenu.selected = 0
@@ -465,14 +465,14 @@ eventLoop:
 				action = actionClear | actionDraw
 			case xkb.K_Return, xkb.K_Right:
 				if curmenu.selected != -1 {
-					if curmenu.children[curmenu.selected].Label == "" {
+					if !curmenu.children[curmenu.selected].Selectable() {
 						break /* ignore separators */
 					}
-					if curmenu.children[curmenu.selected].submenu != nil {
-						curmenu = curmenu.children[curmenu.selected].submenu
+					if curmenu.children[curmenu.selected].GetSubMenu() != nil {
+						curmenu = curmenu.children[curmenu.selected].GetSubMenu()
 						curmenu.show()
 					} else {
-						ret, werr = curmenu.children[curmenu.selected].Output, nil
+						ret, werr = curmenu.children[curmenu.selected].Id(), nil
 						break eventLoop
 					}
 					curmenu.selected = 0
@@ -480,8 +480,8 @@ eventLoop:
 				}
 			case xkb.K_Escape, xkb.K_Left:
 				if curmenu.parent != nil {
-					curmenu.selected = curmenu.parent.menu.selected
-					curmenu = curmenu.parent.menu
+					curmenu.selected = curmenu.parent.Parent().selected
+					curmenu = curmenu.parent.Parent()
 					action = actionClear | actionDraw
 				}
 			case xkb.K_BackSpace, xkb.K_Clear, xkb.K_Delete:
