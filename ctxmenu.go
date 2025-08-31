@@ -39,6 +39,7 @@ type ColorPair struct {
 
 type ContextMenu struct {
 	*Config
+	*Display
 
 	normal    ColorPair
 	selected  ColorPair
@@ -48,22 +49,6 @@ type ContextMenu struct {
 	font      font.Face
 
 	seen bool /* if the cursor is seen above menu */
-
-	conn       *wayland.Conn
-	display    *proto.Display
-	registry   *proto.Registry
-	compositor *proto.Compositor
-	seat       *proto.Seat
-	lshell     *proto.LayerShell
-	shm        *proto.Shm
-	output     *proto.Output
-	pointer    *proto.Pointer
-	keyboard   *proto.Keyboard
-	pshapeman  *proto.CursorShapeManager
-	pshapedev  *proto.CursorShapeDevice
-
-	monOffset image.Point
-	monSize   image.Point
 }
 
 func parseFontString(s string) (font.Face, error) {
@@ -168,62 +153,11 @@ func (ctxmenu *ContextMenu) measureText(text string) int {
 	return width.Ceil()
 }
 
-func (ctxmenu *ContextMenu) sync() {
-	done := make(chan struct{})
-	// Get display sync callback
-	ctxmenu.display.Sync(&proto.CallbackHandlers{
-		OnDone: func(_ wayland.Event) bool {
-			done <- struct{}{}
-			return true
-		},
-	})
-
-	<-done
-}
-
-func (ctxmenu *ContextMenu) Monitor() image.Rectangle {
-	return image.Rectangle{
-		ctxmenu.monOffset,
-		ctxmenu.monOffset.Add(ctxmenu.monSize),
-	}
-}
-
 type QuitEvent struct {
 }
 
 func (QuitEvent) Proxy() wayland.Proxy {
 	return nil
-}
-
-func (cm *ContextMenu) getPointerPosition() (*proto.WlSurface, *proto.LayerSurface) {
-	surf := cm.compositor.CreateSurface(nil)
-
-	var lsurf *proto.LayerSurface
-	lsurf = cm.lshell.GetLayerSurface(surf, cm.output, proto.LayerShellLayerOverlay, "menu", &proto.LayerSurfaceHandlers{
-		// Listen for configure/closed
-		OnConfigure: func(ev wayland.Event) bool {
-			e := ev.(*proto.LayerSurfaceConfigureEvent)
-			// Ack first (required)
-			lsurf.AckConfigure(e.Serial())
-
-			img, err := NewSurfaceImage(image.Rect(0, 0, int(e.Width()), int(e.Height())), cm.shm)
-			if err != nil {
-				panic(err)
-			}
-			surf.Attach(img.Buffer(), 0, 0)
-			surf.Commit()
-			img.Close()
-			return true
-		},
-	})
-
-	lsurf.SetExclusiveZone(-1)
-	lsurf.SetAnchor(proto.LayerSurfaceAnchorLeft | proto.LayerSurfaceAnchorRight | proto.LayerSurfaceAnchorTop | proto.LayerSurfaceAnchorBottom)
-	surf.Commit()
-	cm.sync()
-
-	cm.sync()
-	return surf, lsurf
 }
 
 /* run event loop */
@@ -235,7 +169,11 @@ func Run[T comparable](items Menu[T], conf *Config, wlDisplay string, hover func
 	/* event queue with a buffer of 128, we really don't want events to kill the event-thread */
 	events := make(chan wayland.Event, 128)
 
-	ctxmenu, err := initContext(conf, wlDisplay, events)
+	disp, err := NewDisplay(wlDisplay, events)
+	if err != nil {
+		return ret, err
+	}
+	ctxmenu, err := initContext(conf, disp)
 	if err != nil {
 		return ret, err
 	}
@@ -518,20 +456,12 @@ eventLoop:
 	return
 }
 
-func (ctxmenu *ContextMenu) getPointer() {
-	ctxmenu.pointer = ctxmenu.seat.GetPointer(nil)
-	ctxmenu.pshapedev = ctxmenu.pshapeman.GetPointer(ctxmenu.pointer)
-}
-
-func (ctxmenu *ContextMenu) getKeyboard() {
-	ctxmenu.keyboard = ctxmenu.seat.GetKeyboard(nil)
-}
-
-func initContext(conf *Config, wlDisplay string, drain chan<- wayland.Event) (*ContextMenu, error) {
+func initContext(conf *Config, disp *Display) (*ContextMenu, error) {
 	var ctxmenu ContextMenu
 	/* initializers */
 	var err error
 	ctxmenu.Config = conf
+	ctxmenu.Display = disp
 	ctxmenu.normal.Background, err = parseColor(ctxmenu.BackgroundColor)
 	if err != nil {
 		return nil, err
@@ -561,75 +491,5 @@ func initContext(conf *Config, wlDisplay string, drain chan<- wayland.Event) (*C
 		return nil, err
 	}
 
-	ctxmenu.conn, err = wayland.Connect(wlDisplay)
-	if err != nil {
-		log.Fatalf("unable to connect to wayland server: %v", err)
-		return nil, err
-	}
-	ctxmenu.conn.SetDrain(drain)
-
-	// Connect to wayland server
-	ctxmenu.display = proto.NewDisplay(&proto.DisplayHandlers{
-		OnError: func(event wayland.Event) bool {
-			ev := event.(*proto.DisplayErrorEvent)
-			log.Fatalf("displayerror on %s: %s [%d]\n", ev.ObjectID().Name(), ev.Message(), ev.Code())
-			return true
-		},
-		OnDeleteID: ctxmenu.conn.UnregisterEvent,
-	})
-
-	/* manually registing display */
-	ctxmenu.conn.Register(ctxmenu.display)
-
-	ctxmenu.compositor = proto.NewCompositor()
-	ctxmenu.shm = proto.NewShm(nil)
-	ctxmenu.seat = proto.NewSeat(&proto.SeatHandlers{
-		OnCapabilities: func(evt wayland.Event) bool {
-			e := evt.(*proto.SeatCapabilitiesEvent)
-
-			hasPointer := e.Capabilities()&proto.SeatCapabilityPointer != 0
-			if hasPointer && ctxmenu.pointer == nil {
-				ctxmenu.getPointer()
-			} else if !hasPointer && ctxmenu.pointer != nil {
-				ctxmenu.pointer = nil
-			}
-
-			hasKeyboard := e.Capabilities()&proto.SeatCapabilityKeyboard != 0
-			if hasKeyboard && ctxmenu.keyboard == nil {
-				ctxmenu.getKeyboard()
-			} else if !hasKeyboard && ctxmenu.keyboard != nil {
-				ctxmenu.keyboard = nil
-			}
-			return true
-		},
-	})
-	ctxmenu.lshell = proto.NewLayerShell()
-	ctxmenu.output = proto.NewOutput(&proto.OutputHandlers{
-		OnGeometry: func(evt wayland.Event) bool {
-			e := evt.(*proto.OutputGeometryEvent)
-			ctxmenu.monOffset = image.Point{int(e.X()), int(e.Y())}
-			return true
-		},
-		OnMode: func(evt wayland.Event) bool {
-			e := evt.(*proto.OutputModeEvent)
-			ctxmenu.monSize = image.Point{int(e.Width()), int(e.Height())}
-			return true
-		},
-	})
-	ctxmenu.pshapeman = proto.NewCursorShapeManager()
-
-	reg := wayland.Registrar{}
-	reg.Add(ctxmenu.compositor, ctxmenu.shm, ctxmenu.seat, ctxmenu.lshell, ctxmenu.output, ctxmenu.pshapeman)
-
-	// Get global interfaces registry
-	ctxmenu.registry = ctxmenu.display.GetRegistry(&proto.RegistryHandlers{
-		OnGlobal: reg.Handler,
-	})
-
-	// Wait for interfaces to register
-	ctxmenu.sync()
-
-	// Issue output geometry
-	ctxmenu.sync()
 	return &ctxmenu, err
 }
