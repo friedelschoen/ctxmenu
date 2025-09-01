@@ -37,7 +37,7 @@ type Config struct {
 
 var DefaultConfig = Config{
 	/* font, separate different fonts with comma */
-	FontName: "Go Mono:size=12",
+	FontName: "monospace:size=12",
 
 	/* colors */
 	BackgroundColor:    "#FFFFFF",
@@ -55,7 +55,7 @@ var DefaultConfig = Config{
 	OverflowArrowHeight: 7,
 	OverflowArrowMargin: 5,
 	SubmenuArrowWidth:   10,
-	SubmenuArrowMargin:  3,
+	SubmenuArrowMargin:  7,
 
 	/* text alignment, set to LeftAlignment, CenterAlignment or RightAlignment */
 	Alignment: AlignLeft,

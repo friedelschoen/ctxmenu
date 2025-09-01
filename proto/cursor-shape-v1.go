@@ -72,7 +72,7 @@ func (i *CursorShapeManager) Destroy() {
 }
 func destroyCursorShapeManager(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -88,7 +88,7 @@ func destroyCursorShapeManager(p wayland.BaseProxy) {
 // When the pointer capability is removed from the wl_seat, the
 // wp_cursor_shape_device_v1 object becomes inert.
 func (i *CursorShapeManager) GetPointer(pointer *Pointer) *CursorShapeDevice {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	cursorShapeDevice := NewCursorShapeDevice()
@@ -110,7 +110,7 @@ func (i *CursorShapeManager) GetPointer(pointer *Pointer) *CursorShapeDevice {
 // When the zwp_tablet_tool_v2 is removed, the wp_cursor_shape_device_v1
 // object becomes inert.
 func (i *CursorShapeManager) GetTabletToolV2(tabletTool wayland.Proxy) *CursorShapeDevice {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	cursorShapeDevice := NewCursorShapeDevice()
@@ -161,7 +161,7 @@ func (i *CursorShapeDevice) Destroy() {
 }
 func destroyCursorShapeDevice(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -193,7 +193,7 @@ func destroyCursorShapeDevice(p wayland.BaseProxy) {
 //
 // serial : serial number of the enter event
 func (i *CursorShapeDevice) SetShape(serial uint32, shape CursorShapeDeviceShape) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)

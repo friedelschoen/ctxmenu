@@ -34,9 +34,9 @@
 package proto
 
 import wayland "github.com/friedelschoen/wayland"
-import "runtime"
 import "fmt"
 import "syscall"
+import "runtime"
 
 // Display : core global object
 //
@@ -77,7 +77,7 @@ func (i *Display) Name() string {
 //
 // The callback_data passed in the callback is undefined and should be ignored.
 func (i *Display) Sync(callbackHandlers *CallbackHandlers) *Callback {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	callback := NewCallback(callbackHandlers)
@@ -103,7 +103,7 @@ func (i *Display) Sync(callbackHandlers *CallbackHandlers) *Callback {
 // Therefore, clients should invoke get_registry as infrequently as
 // possible to avoid wasting memory.
 func (i *Display) GetRegistry(registryHandlers *RegistryHandlers) *Registry {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	registry := NewRegistry(registryHandlers)
@@ -123,7 +123,7 @@ func (i *Display) Destroy() {
 }
 func destroyDisplay(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 }
@@ -329,7 +329,7 @@ func (i *Registry) Name() string {
 //
 // name : unique numeric name of the object
 func (i *Registry) Bind(name uint32, iface string, version uint32, id wayland.Proxy) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -348,7 +348,7 @@ func (i *Registry) Destroy() {
 }
 func destroyRegistry(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 }
@@ -486,7 +486,7 @@ func (i *Callback) Name() string {
 
 // Destroy :
 func (i *Callback) Destroy() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 }
@@ -554,7 +554,7 @@ func (i *Compositor) Name() string {
 //
 // Ask the compositor to create a new surface.
 func (i *Compositor) CreateSurface(idHandlers *WlSurfaceHandlers) *WlSurface {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewWlSurface(idHandlers)
@@ -572,7 +572,7 @@ func (i *Compositor) CreateSurface(idHandlers *WlSurfaceHandlers) *WlSurface {
 //
 // Ask the compositor to create a new region.
 func (i *Compositor) CreateRegion() *Region {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewRegion()
@@ -592,7 +592,7 @@ func (i *Compositor) Destroy() {
 }
 func destroyCompositor(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 }
@@ -655,7 +655,7 @@ func (i *ShmPool) Name() string {
 // stride : number of bytes from the beginning of one row to the beginning of the next row
 // format : buffer pixel format
 func (i *ShmPool) CreateBuffer(offset int32, width int32, height int32, stride int32, format ShmFormat, idHandlers *BufferHandlers) *Buffer {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewBuffer(idHandlers)
@@ -686,7 +686,7 @@ func (i *ShmPool) Destroy() {
 }
 func destroyShmPool(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -710,7 +710,7 @@ func destroyShmPool(p wayland.BaseProxy) {
 //
 // size : new size of the pool, in bytes
 func (i *ShmPool) Resize(size int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -777,7 +777,7 @@ func (i *Shm) Name() string {
 // fd : file descriptor for the pool
 // size : pool size, in bytes
 func (i *Shm) CreatePool(fd int, size int32) *ShmPool {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewShmPool()
@@ -804,7 +804,7 @@ func (i *Shm) Release() {
 }
 func destroyShm(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -1457,7 +1457,7 @@ func (i *Buffer) Destroy() {
 }
 func destroyBuffer(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -1567,7 +1567,7 @@ func (i *DataOffer) Name() string {
 // serial : serial number of the accept request
 // mimeType : mime type accepted by the client
 func (i *DataOffer) Accept(serial uint32, mimeType string) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -1603,7 +1603,7 @@ func (i *DataOffer) Accept(serial uint32, mimeType string) {
 // mimeType : mime type desired by receiver
 // fd : file descriptor for data transfer
 func (i *DataOffer) Receive(mimeType string, fd int) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -1622,7 +1622,7 @@ func (i *DataOffer) Destroy() {
 }
 func destroyDataOffer(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -1648,7 +1648,7 @@ func destroyDataOffer(p wayland.BaseProxy) {
 // If wl_data_offer.finish request is received for a non drag and drop
 // operation, the invalid_finish protocol error is raised.
 func (i *DataOffer) Finish() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 3)
@@ -1694,7 +1694,7 @@ func (i *DataOffer) Finish() {
 // dndActions : actions supported by the destination client
 // preferredAction : action preferred by the destination client
 func (i *DataOffer) SetActions(dndActions DataDeviceManagerDndAction, preferredAction DataDeviceManagerDndAction) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 4)
@@ -1922,7 +1922,7 @@ func (i *DataSource) Name() string {
 //
 // mimeType : mime type offered by the data source
 func (i *DataSource) Offer(mimeType string) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -1940,7 +1940,7 @@ func (i *DataSource) Destroy() {
 }
 func destroyDataSource(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -1967,7 +1967,7 @@ func destroyDataSource(p wayland.BaseProxy) {
 //
 // dndActions : actions supported by the data source
 func (i *DataSource) SetActions(dndActions DataDeviceManagerDndAction) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -2322,7 +2322,7 @@ func (i *DataDevice) Name() string {
 // icon : drag-and-drop icon surface
 // serial : serial number of the implicit grab on the origin
 func (i *DataDevice) StartDrag(source *DataSource, origin *WlSurface, icon *WlSurface, serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -2357,7 +2357,7 @@ func (i *DataDevice) StartDrag(source *DataSource, origin *WlSurface, icon *WlSu
 // source : data source for the selection
 // serial : serial number of the event that triggered this request
 func (i *DataDevice) SetSelection(source *DataSource, serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -2380,7 +2380,7 @@ func (i *DataDevice) Release() {
 }
 func destroyDataDevice(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -2730,7 +2730,7 @@ func (i *DataDeviceManager) Name() string {
 //
 // Create a new data source.
 func (i *DataDeviceManager) CreateDataSource(idHandlers *DataSourceHandlers) *DataSource {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewDataSource(idHandlers)
@@ -2750,7 +2750,7 @@ func (i *DataDeviceManager) CreateDataSource(idHandlers *DataSourceHandlers) *Da
 //
 // seat : seat associated with the data device
 func (i *DataDeviceManager) GetDataDevice(seat *Seat, idHandlers *DataDeviceHandlers) *DataDevice {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewDataDevice(idHandlers)
@@ -2771,7 +2771,7 @@ func (i *DataDeviceManager) Destroy() {
 }
 func destroyDataDeviceManager(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 }
@@ -2884,7 +2884,7 @@ func (i *Shell) Name() string {
 //
 // surface : surface to be given the shell surface role
 func (i *Shell) GetShellSurface(surface *WlSurface, idHandlers *ShellSurfaceHandlers) *ShellSurface {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewShellSurface(idHandlers)
@@ -2905,7 +2905,7 @@ func (i *Shell) Destroy() {
 }
 func destroyShell(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 }
@@ -2989,7 +2989,7 @@ func (i *ShellSurface) Name() string {
 //
 // serial : serial number of the ping event
 func (i *ShellSurface) Pong(serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -3010,7 +3010,7 @@ func (i *ShellSurface) Pong(serial uint32) {
 // seat : seat whose pointer is used
 // serial : serial number of the implicit grab on the pointer
 func (i *ShellSurface) Move(seat *Seat, serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -3033,7 +3033,7 @@ func (i *ShellSurface) Move(seat *Seat, serial uint32) {
 // serial : serial number of the implicit grab on the pointer
 // edges : which edge or corner is being dragged
 func (i *ShellSurface) Resize(seat *Seat, serial uint32, edges ShellSurfaceResize) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -3051,7 +3051,7 @@ func (i *ShellSurface) Resize(seat *Seat, serial uint32, edges ShellSurfaceResiz
 //
 // A toplevel surface is not fullscreen, maximized or transient.
 func (i *ShellSurface) SetToplevel() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 3)
@@ -3075,7 +3075,7 @@ func (i *ShellSurface) SetToplevel() {
 // y : surface-local y coordinate
 // flags : transient surface behavior
 func (i *ShellSurface) SetTransient(parent *WlSurface, x int32, y int32, flags ShellSurfaceTransient) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 4)
@@ -3128,7 +3128,7 @@ func (i *ShellSurface) SetTransient(parent *WlSurface, x int32, y int32, flags S
 // framerate : framerate in mHz
 // output : output on which the surface is to be fullscreen
 func (i *ShellSurface) SetFullscreen(method ShellSurfaceFullscreenMethod, framerate uint32, output *Output) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 5)
@@ -3173,7 +3173,7 @@ func (i *ShellSurface) SetFullscreen(method ShellSurfaceFullscreenMethod, framer
 // y : surface-local y coordinate
 // flags : transient surface behavior
 func (i *ShellSurface) SetPopup(seat *Seat, serial uint32, parent *WlSurface, x int32, y int32, flags ShellSurfaceTransient) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 6)
@@ -3211,7 +3211,7 @@ func (i *ShellSurface) SetPopup(seat *Seat, serial uint32, parent *WlSurface, x 
 //
 // output : output on which the surface is to be maximized
 func (i *ShellSurface) SetMaximized(output *Output) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 7)
@@ -3237,7 +3237,7 @@ func (i *ShellSurface) SetMaximized(output *Output) {
 //
 // title : surface title
 func (i *ShellSurface) SetTitle(title string) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 8)
@@ -3258,7 +3258,7 @@ func (i *ShellSurface) SetTitle(title string) {
 //
 // class : surface class
 func (i *ShellSurface) SetClass(class string) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 9)
@@ -3274,7 +3274,7 @@ func (i *ShellSurface) Destroy() {
 }
 func destroyShellSurface(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 }
@@ -3641,7 +3641,7 @@ func (i *WlSurface) Destroy() {
 }
 func destroyWlSurface(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -3722,7 +3722,7 @@ func destroyWlSurface(p wayland.BaseProxy) {
 // x : surface-local x coordinate
 // y : surface-local y coordinate
 func (i *WlSurface) Attach(buffer *Buffer, x int32, y int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -3767,7 +3767,7 @@ func (i *WlSurface) Attach(buffer *Buffer, x int32, y int32) {
 // width : width of damage rectangle
 // height : height of damage rectangle
 func (i *WlSurface) Damage(x int32, y int32, width int32, height int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -3815,7 +3815,7 @@ func (i *WlSurface) Damage(x int32, y int32, width int32, height int32) {
 // The callback_data passed in the callback is the current time, in
 // milliseconds, with an undefined base.
 func (i *WlSurface) Frame(callbackHandlers *CallbackHandlers) *Callback {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	callback := NewCallback(callbackHandlers)
@@ -3858,7 +3858,7 @@ func (i *WlSurface) Frame(callbackHandlers *CallbackHandlers) *Callback {
 //
 // region : opaque region of the surface
 func (i *WlSurface) SetOpaqueRegion(region *Region) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 4)
@@ -3899,7 +3899,7 @@ func (i *WlSurface) SetOpaqueRegion(region *Region) {
 //
 // region : input region of the surface
 func (i *WlSurface) SetInputRegion(region *Region) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 5)
@@ -3935,7 +3935,7 @@ func (i *WlSurface) SetInputRegion(region *Region) {
 //
 // Other interfaces may add further double-buffered surface state.
 func (i *WlSurface) Commit() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 6)
@@ -3980,7 +3980,7 @@ func (i *WlSurface) Commit() {
 //
 // transform : transform for interpreting buffer contents
 func (i *WlSurface) SetBufferTransform(transform int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 7)
@@ -4018,7 +4018,7 @@ func (i *WlSurface) SetBufferTransform(transform int32) {
 //
 // scale : scale for interpreting buffer contents
 func (i *WlSurface) SetBufferScale(scale int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 8)
@@ -4068,7 +4068,7 @@ func (i *WlSurface) SetBufferScale(scale int32) {
 // width : width of damage rectangle
 // height : height of damage rectangle
 func (i *WlSurface) DamageBuffer(x int32, y int32, width int32, height int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 9)
@@ -4102,7 +4102,7 @@ func (i *WlSurface) DamageBuffer(x int32, y int32, width int32, height int32) {
 // x : surface-local x coordinate
 // y : surface-local y coordinate
 func (i *WlSurface) Offset(x int32, y int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 10)
@@ -4366,7 +4366,7 @@ func (i *Seat) Name() string {
 // never had the pointer capability. The missing_capability error will
 // be sent in this case.
 func (i *Seat) GetPointer(idHandlers *PointerHandlers) *Pointer {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewPointer(idHandlers)
@@ -4391,7 +4391,7 @@ func (i *Seat) GetPointer(idHandlers *PointerHandlers) *Pointer {
 // never had the keyboard capability. The missing_capability error will
 // be sent in this case.
 func (i *Seat) GetKeyboard(idHandlers *KeyboardHandlers) *Keyboard {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewKeyboard(idHandlers)
@@ -4416,7 +4416,7 @@ func (i *Seat) GetKeyboard(idHandlers *KeyboardHandlers) *Keyboard {
 // never had the touch capability. The missing_capability error will
 // be sent in this case.
 func (i *Seat) GetTouch(idHandlers *TouchHandlers) *Touch {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewTouch(idHandlers)
@@ -4439,7 +4439,7 @@ func (i *Seat) Release() {
 }
 func destroySeat(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 3)
@@ -4701,7 +4701,7 @@ func (i *Pointer) Name() string {
 // hotspotX : surface-local x coordinate
 // hotspotY : surface-local y coordinate
 func (i *Pointer) SetCursor(serial uint32, surface *WlSurface, hotspotX int32, hotspotY int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -4730,7 +4730,7 @@ func (i *Pointer) Release() {
 }
 func destroyPointer(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -5600,7 +5600,7 @@ func (i *Keyboard) Release() {
 }
 func destroyKeyboard(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -6095,7 +6095,7 @@ func (i *Touch) Release() {
 }
 func destroyTouch(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -6527,7 +6527,7 @@ func (i *Output) Release() {
 }
 func destroyOutput(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -7073,7 +7073,7 @@ func (i *Region) Destroy() {
 }
 func destroyRegion(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -7091,7 +7091,7 @@ func destroyRegion(p wayland.BaseProxy) {
 // width : rectangle width
 // height : rectangle height
 func (i *Region) Add(x int32, y int32, width int32, height int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -7113,7 +7113,7 @@ func (i *Region) Add(x int32, y int32, width int32, height int32) {
 // width : rectangle width
 // height : rectangle height
 func (i *Region) Subtract(x int32, y int32, width int32, height int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -7198,7 +7198,7 @@ func (i *Subcompositor) Destroy() {
 }
 func destroySubcompositor(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -7232,7 +7232,7 @@ func destroySubcompositor(p wayland.BaseProxy) {
 // surface : the surface to be turned into a sub-surface
 // parent : the parent surface
 func (i *Subcompositor) GetSubsurface(surface *WlSurface, parent *WlSurface) *Subsurface {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewSubsurface()
@@ -7411,7 +7411,7 @@ func (i *Subsurface) Destroy() {
 }
 func destroySubsurface(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -7440,7 +7440,7 @@ func destroySubsurface(p wayland.BaseProxy) {
 // x : x coordinate in the parent surface
 // y : y coordinate in the parent surface
 func (i *Subsurface) SetPosition(x int32, y int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -7469,7 +7469,7 @@ func (i *Subsurface) SetPosition(x int32, y int32) {
 //
 // sibling : the reference surface
 func (i *Subsurface) PlaceAbove(sibling *WlSurface) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -7486,7 +7486,7 @@ func (i *Subsurface) PlaceAbove(sibling *WlSurface) {
 //
 // sibling : the reference surface
 func (i *Subsurface) PlaceBelow(sibling *WlSurface) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 3)
@@ -7512,7 +7512,7 @@ func (i *Subsurface) PlaceBelow(sibling *WlSurface) {
 //
 // See wl_subsurface for the recursive effect of this mode.
 func (i *Subsurface) SetSync() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 4)
@@ -7543,7 +7543,7 @@ func (i *Subsurface) SetSync() {
 // If a surface's parent surface behaves as desynchronized, then
 // the cached state is applied on set_desync.
 func (i *Subsurface) SetDesync() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 5)
@@ -7606,7 +7606,7 @@ func (i *Fixes) Destroy() {
 }
 func destroyFixes(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -7629,7 +7629,7 @@ func destroyFixes(p wayland.BaseProxy) {
 //
 // registry : the registry to destroy
 func (i *Fixes) DestroyRegistry(registry *Registry) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)

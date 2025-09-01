@@ -62,9 +62,9 @@ func DrawArrow(dst draw.Image, bounds image.Rectangle, src image.Image, srcp ima
 			ok := false
 			switch dir {
 			case DirRight:
-				ok = abs(y-w) <= x // vertical hypotenuse on left
-			case DirLeft:
 				ok = abs(y-w) <= w-x // vertical hypotenuse on right
+			case DirLeft:
+				ok = abs(y-w) <= x // vertical hypotenuse on left
 			case DirUp:
 				ok = abs(x-h) <= y // horizontal hypotenuse on bottom
 			case DirDown:

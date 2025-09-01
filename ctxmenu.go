@@ -45,7 +45,6 @@ type ContextMenu struct {
 	selected  ColorPair
 	border    image.Image
 	separator image.Image
-	x, y      int /* initial position */
 	font      font.Face
 
 	seen bool /* if the cursor is seen above menu */
@@ -161,7 +160,7 @@ func (QuitEvent) Proxy() wayland.Proxy {
 }
 
 /* run event loop */
-func Run[T comparable](items Menu[T], conf *Config, wlDisplay string, hover func(T)) (ret T, werr error) {
+func Run[T comparable](items []Item[T], conf *Config, wlDisplay string, hover func(T)) (ret T, werr error) {
 	if conf == nil {
 		conf = &DefaultConfig
 	}
@@ -180,30 +179,52 @@ func Run[T comparable](items Menu[T], conf *Config, wlDisplay string, hover func
 
 	pointerpos, layerpos := ctxmenu.getPointerPosition()
 
-	rootmenu, err := items.makeMenu(ctxmenu, nil)
+	rootmenu, err := makeMenu(ctxmenu, items)
 	if err != nil {
 		return ret, err
 	}
 
-	var curmenu *menuState[T]
+	var stack []*menuState[T]
+	curmenu := -1
 	var buf []byte
-	var previtem itemState[T]
-	// curmenu.selected := -1
+	var previtem Item[T]
+	// stack[curmenu].selected := -1
 	var hasleft *time.Timer
 	var kb *xkb.Keyboard
 	var curY int
+
+	open := func(item Item[T]) bool {
+		for i := curmenu + 1; i < len(stack); i++ {
+			stack[i].close()
+		}
+		stack = stack[:curmenu+1]
+
+		items := item.GetSubMenu()
+		if len(items) == 0 {
+			return false
+		}
+		m, err := makeMenu(ctxmenu, items)
+		if err != nil {
+			log.Printf("unable to make menu: %v\n", err)
+		} else {
+			m.show(stack[curmenu], 0, 0)
+			m.draw()
+			stack = append(stack, m)
+		}
+		return true
+	}
+
 eventLoop:
 	for event := range events {
 		if ev, ok := event.(*proto.PointerEnterEvent); ok && pointerpos != nil {
 			if ev.Surface().ID() == pointerpos.ID() {
-				ctxmenu.x = int(ev.SurfaceX())
-				ctxmenu.y = int(ev.SurfaceY())
 				layerpos.Destroy()
 				layerpos = nil
 				pointerpos.Destroy()
 				pointerpos = nil
-				curmenu = rootmenu
-				if err := rootmenu.show(); err != nil {
+				curmenu = 0
+				stack = append(stack, rootmenu)
+				if err := rootmenu.show(nil, int(ev.SurfaceX()), int(ev.SurfaceY())); err != nil {
 					break eventLoop
 				}
 				rootmenu.draw()
@@ -212,9 +233,10 @@ eventLoop:
 			}
 		}
 
-		if curmenu == nil {
+		if curmenu == -1 {
 			continue
 		}
+
 		var action int
 		switch ev := event.(type) {
 		case QuitEvent:
@@ -230,9 +252,9 @@ eventLoop:
 				hasleft.Stop()
 				hasleft = nil
 			}
-			for menu := range rootmenu.seq() {
+			for i, menu := range stack {
 				if menu.surface != nil && ev.Surface().ID() == menu.surface.ID() {
-					curmenu = menu
+					curmenu = i
 					break
 				}
 			}
@@ -245,29 +267,26 @@ eventLoop:
 			}
 		case *proto.PointerMotionEvent:
 			curY = int(ev.SurfaceY())
-			itemidx := curmenu.getitem(curY)
+			itemidx := stack[curmenu].getitem(curY)
 			if itemidx == -1 {
 				continue
 			}
-			if itemidx == curmenu.selected {
+			if itemidx == stack[curmenu].selected {
 				continue
 			}
-			item := curmenu.children[itemidx]
+			item := stack[curmenu].children[itemidx]
 			if previtem == item {
 				continue
 			}
 			rootmenu.ctxmenu.seen = true
 			previtem = item
 			if !item.Selectable() {
-				curmenu.selected = -1
+				stack[curmenu].selected = -1
 			} else {
-				curmenu.selected = itemidx
+				stack[curmenu].selected = itemidx
 			}
-			curmenu.hideChildren(nil)
-			if item.GetSubMenu() != nil {
-				item.GetSubMenu().show()
-				item.GetSubMenu().draw()
-			}
+
+			open(item)
 			if hover != nil {
 				hover(item.Id())
 			}
@@ -276,15 +295,15 @@ eventLoop:
 			if ev.Axis() != proto.PointerAxisHorizontalScroll {
 				break
 			}
-			if curmenu.overflow == -1 {
+			if stack[curmenu].overflow == -1 {
 				break
 			}
 			if ev.Value() < 0 {
-				curmenu.first = max(curmenu.first-1, 0)
+				stack[curmenu].first = max(stack[curmenu].first-1, 0)
 				action = actionClear | actionDraw
 				break
 			} else if ev.Value() > 0 {
-				curmenu.first = min(curmenu.first+1, len(curmenu.children)-curmenu.overflow)
+				stack[curmenu].first = min(stack[curmenu].first+1, len(stack[curmenu].children)-stack[curmenu].overflow)
 				action = actionClear | actionDraw
 				break
 			}
@@ -292,35 +311,32 @@ eventLoop:
 			if ev.State() != proto.PointerButtonStatePressed {
 				break
 			}
-			menu := curmenu
+			menu := stack[curmenu]
 			item := menu.getitem(curY)
 			ovitem := menu.isoverflowitem(curY)
-			if item == -1 && ovitem == nil {
-				curmenu.selected = -1
+			if item == -1 && ovitem == 0 {
+				stack[curmenu].selected = -1
 				menu.first = 0
 				action = actionClear | actionDraw
 				break
 			}
-			if ovitem == curmenu.overflowItemTop {
-				curmenu.first = max(curmenu.first-1, 0)
+			if ovitem == 1 {
+				stack[curmenu].first = max(stack[curmenu].first-1, 0)
 				action = actionClear | actionDraw
 				break
-			} else if ovitem == curmenu.overflowItemBottom {
-				curmenu.first = min(curmenu.first+1, len(curmenu.children)-curmenu.overflow)
+			} else if ovitem == -1 {
+				stack[curmenu].first = min(stack[curmenu].first+1, len(stack[curmenu].children)-stack[curmenu].overflow)
 				action = actionClear | actionDraw
 				break
 			}
 			if !menu.children[item].Selectable() {
 				break /* ignore separators */
 			}
-			if menu.children[item].GetSubMenu() != nil {
-				curmenu = menu.children[item].GetSubMenu()
-				curmenu.show()
-			} else {
+			if !open(menu.children[item]) {
 				ret, werr = menu.children[item].Id(), nil
 				break eventLoop
 			}
-			curmenu.selected = 0
+			stack[curmenu].selected = 0
 			action = actionClear | actionDraw
 		case *proto.KeyboardKeymapEvent:
 			if ev.Format() != proto.KeyboardKeymapFormatXkbV1 {
@@ -356,7 +372,7 @@ eventLoop:
 			}
 
 			/* esc closes ctxmenu when current menu is the root menu */
-			if key.Sym == xkb.K_Escape && curmenu.parent == nil {
+			if key.Sym == xkb.K_Escape && len(stack) > 1 {
 				werr = ErrExited
 				break eventLoop
 			}
@@ -364,62 +380,60 @@ eventLoop:
 			/* cycle through menu */
 			switch key.Sym {
 			case xkb.K_Home:
-				curmenu.selected = curmenu.itemcycle(ItemFirst)
+				stack[curmenu].selected = stack[curmenu].itemcycle(ItemFirst)
 				action = actionClear | actionDraw
 			case xkb.K_End:
-				curmenu.selected = curmenu.itemcycle(ItemLast)
+				stack[curmenu].selected = stack[curmenu].itemcycle(ItemLast)
 				action = actionClear | actionDraw
 			case xkb.K_Tab:
 				if key.Mod&xkb.ModShift > 0 {
 					if len(buf) > 0 {
-						curmenu.selected = curmenu.matchitem(string(buf), -1)
+						stack[curmenu].selected = stack[curmenu].matchitem(string(buf), -1)
 						action = actionDraw
 					} else {
-						curmenu.selected = curmenu.itemcycle(ItemPrev)
+						stack[curmenu].selected = stack[curmenu].itemcycle(ItemPrev)
 						action = actionClear | actionDraw
 					}
 				} else {
 					if len(buf) > 0 {
-						curmenu.selected = curmenu.matchitem(string(buf), 1)
+						stack[curmenu].selected = stack[curmenu].matchitem(string(buf), 1)
 						action = actionDraw
 					} else {
-						curmenu.selected = curmenu.itemcycle(ItemNext)
+						stack[curmenu].selected = stack[curmenu].itemcycle(ItemNext)
 						action = actionClear | actionDraw
 					}
 				}
 			case xkb.K_Up:
-				curmenu.selected = curmenu.itemcycle(ItemPrev)
+				stack[curmenu].selected = stack[curmenu].itemcycle(ItemPrev)
 				action = actionClear | actionDraw
 			case xkb.K_Down:
-				curmenu.selected = curmenu.itemcycle(ItemNext)
+				stack[curmenu].selected = stack[curmenu].itemcycle(ItemNext)
 				action = actionClear | actionDraw
 			case '1', '2', '3', '4', '5', '6', '7', '8', '9':
-				item := curmenu.itemcycle(ItemFirst)
+				item := stack[curmenu].itemcycle(ItemFirst)
 				for range key.Char - '0' {
-					curmenu.selected = item
-					item = curmenu.itemcycle(ItemNext)
+					stack[curmenu].selected = item
+					item = stack[curmenu].itemcycle(ItemNext)
 				}
-				curmenu.selected = item
+				stack[curmenu].selected = item
 				action = actionClear | actionDraw
 			case xkb.K_Return, xkb.K_Right:
-				if curmenu.selected != -1 {
-					if !curmenu.children[curmenu.selected].Selectable() {
+				if stack[curmenu].selected != -1 {
+					if !stack[curmenu].children[stack[curmenu].selected].Selectable() {
 						break /* ignore separators */
 					}
-					if curmenu.children[curmenu.selected].GetSubMenu() != nil {
-						curmenu = curmenu.children[curmenu.selected].GetSubMenu()
-						curmenu.show()
-					} else {
-						ret, werr = curmenu.children[curmenu.selected].Id(), nil
+					if !open(stack[curmenu].children[stack[curmenu].selected]) {
+						ret, werr = stack[curmenu].children[stack[curmenu].selected].Id(), nil
 						break eventLoop
 					}
-					curmenu.selected = 0
+					stack[curmenu].selected = 0
 					action = actionClear | actionDraw
 				}
 			case xkb.K_Escape, xkb.K_Left:
-				if curmenu.parent != nil {
-					curmenu.selected = curmenu.parent.Parent().selected
-					curmenu = curmenu.parent.Parent()
+				if len(stack) > 1 {
+					stack[curmenu].close()
+					stack = stack[:len(stack)-1]
+					stack[curmenu] = stack[len(stack)-1]
 					action = actionClear | actionDraw
 				}
 			case xkb.K_BackSpace, xkb.K_Clear, xkb.K_Delete:
@@ -430,7 +444,7 @@ eventLoop:
 				}
 				for range 2 {
 					buf = append(buf, byte(key.Sym))
-					if curmenu.selected = curmenu.matchitem(string(buf), 0); curmenu.selected != -1 {
+					if stack[curmenu].selected = stack[curmenu].matchitem(string(buf), 0); stack[curmenu].selected != -1 {
 						break
 					}
 					buf = buf[:0]
@@ -442,11 +456,11 @@ eventLoop:
 			buf = buf[:0]
 		}
 		if action&actionDraw != 0 {
-			curmenu.draw()
+			stack[curmenu].draw()
 		}
 	}
 
-	for m := range rootmenu.seq() {
+	for _, m := range stack {
 		m.close()
 	}
 	if kb != nil {

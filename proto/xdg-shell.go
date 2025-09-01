@@ -80,7 +80,7 @@ func (i *WmBase) Destroy() {
 }
 func destroyWmBase(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -95,7 +95,7 @@ func destroyWmBase(p wayland.BaseProxy) {
 // surfaces relative to some parent surface. See the interface description
 // and xdg_surface.get_popup for details.
 func (i *WmBase) CreatePositioner() *Positioner {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewPositioner()
@@ -125,7 +125,7 @@ func (i *WmBase) CreatePositioner() *Positioner {
 // See the documentation of xdg_surface for more details about what an
 // xdg_surface is and how it is used.
 func (i *WmBase) GetXdgSurface(surface *WlSurface, idHandlers *XdgSurfaceHandlers) *XdgSurface {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewXdgSurface(idHandlers)
@@ -148,7 +148,7 @@ func (i *WmBase) GetXdgSurface(surface *WlSurface, idHandlers *XdgSurfaceHandler
 //
 // serial : serial of the ping event
 func (i *WmBase) Pong(serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 3)
@@ -318,7 +318,7 @@ func (i *Positioner) Destroy() {
 }
 func destroyPositioner(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -338,7 +338,7 @@ func destroyPositioner(p wayland.BaseProxy) {
 // width : width of positioned rectangle
 // height : height of positioned rectangle
 func (i *Positioner) SetSize(width int32, height int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -367,7 +367,7 @@ func (i *Positioner) SetSize(width int32, height int32) {
 // width : width of anchor rectangle
 // height : height of anchor rectangle
 func (i *Positioner) SetAnchorRect(x int32, y int32, width int32, height int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -391,7 +391,7 @@ func (i *Positioner) SetAnchorRect(x int32, y int32, width int32, height int32) 
 //
 // anchor : anchor
 func (i *Positioner) SetAnchor(anchor PositionerAnchor) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 3)
@@ -413,7 +413,7 @@ func (i *Positioner) SetAnchor(anchor PositionerAnchor) {
 //
 // gravity : gravity direction
 func (i *Positioner) SetGravity(gravity PositionerGravity) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 4)
@@ -441,7 +441,7 @@ func (i *Positioner) SetGravity(gravity PositionerGravity) {
 //
 // constraintAdjustment : bit mask of constraint adjustments
 func (i *Positioner) SetConstraintAdjustment(constraintAdjustment PositionerConstraintAdjustment) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 5)
@@ -468,7 +468,7 @@ func (i *Positioner) SetConstraintAdjustment(constraintAdjustment PositionerCons
 // x : surface position x offset
 // y : surface position y offset
 func (i *Positioner) SetOffset(x int32, y int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 6)
@@ -488,7 +488,7 @@ func (i *Positioner) SetOffset(x int32, y int32) {
 // xdg_popup.configure event is sent with updated geometry, followed by an
 // xdg_surface.configure event.
 func (i *Positioner) SetReactive() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 7)
@@ -510,7 +510,7 @@ func (i *Positioner) SetReactive() {
 // parentWidth : future window geometry width of parent
 // parentHeight : future window geometry height of parent
 func (i *Positioner) SetParentSize(parentWidth int32, parentHeight int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 8)
@@ -530,7 +530,7 @@ func (i *Positioner) SetParentSize(parentWidth int32, parentHeight int32) {
 //
 // serial : serial of parent configure event
 func (i *Positioner) SetParentConfigure(serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 9)
@@ -829,7 +829,7 @@ func (i *XdgSurface) Destroy() {
 }
 func destroyXdgSurface(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -846,7 +846,7 @@ func destroyXdgSurface(p wayland.BaseProxy) {
 // See the documentation of xdg_toplevel for more details about what an
 // xdg_toplevel is and how it is used.
 func (i *XdgSurface) GetToplevel(idHandlers *ToplevelHandlers) *Toplevel {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewToplevel(idHandlers)
@@ -871,7 +871,7 @@ func (i *XdgSurface) GetToplevel(idHandlers *ToplevelHandlers) *Toplevel {
 // See the documentation of xdg_popup for more details about what an
 // xdg_popup is and how it is used.
 func (i *XdgSurface) GetPopup(parent *XdgSurface, positioner *Positioner, idHandlers *PopupHandlers) *Popup {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewPopup(idHandlers)
@@ -934,7 +934,7 @@ func (i *XdgSurface) GetPopup(parent *XdgSurface, positioner *Positioner, idHand
 // greater than zero. Setting an invalid size will raise an
 // invalid_size error.
 func (i *XdgSurface) SetWindowGeometry(x int32, y int32, width int32, height int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 3)
@@ -984,7 +984,7 @@ func (i *XdgSurface) SetWindowGeometry(x int32, y int32, width int32, height int
 //
 // serial : the serial from the configure event
 func (i *XdgSurface) AckConfigure(serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 4)
@@ -1165,7 +1165,7 @@ func (i *Toplevel) Destroy() {
 }
 func destroyToplevel(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -1197,7 +1197,7 @@ func destroyToplevel(p wayland.BaseProxy) {
 // descendants, and the parent must be different from the child toplevel,
 // otherwise the invalid_parent protocol error is raised.
 func (i *Toplevel) SetParent(parent *Toplevel) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -1221,7 +1221,7 @@ func (i *Toplevel) SetParent(parent *Toplevel) {
 //
 // The string must be encoded in UTF-8.
 func (i *Toplevel) SetTitle(title string) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -1257,7 +1257,7 @@ func (i *Toplevel) SetTitle(title string) {
 //
 // [0] https://standards.freedesktop.org/desktop-entry-spec/
 func (i *Toplevel) SetAppID(appID string) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 3)
@@ -1287,7 +1287,7 @@ func (i *Toplevel) SetAppID(appID string) {
 // x : the x position to pop up the window menu at
 // y : the y position to pop up the window menu at
 func (i *Toplevel) ShowWindowMenu(seat *Seat, serial uint32, x int32, y int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 4)
@@ -1322,7 +1322,7 @@ func (i *Toplevel) ShowWindowMenu(seat *Seat, serial uint32, x int32, y int32) {
 // seat : the wl_seat of the user event
 // serial : the serial of the user event
 func (i *Toplevel) Move(seat *Seat, serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 5)
@@ -1371,7 +1371,7 @@ func (i *Toplevel) Move(seat *Seat, serial uint32) {
 // serial : the serial of the user event
 // edges : which edge or corner is being dragged
 func (i *Toplevel) Resize(seat *Seat, serial uint32, edges ToplevelResizeEdge) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 6)
@@ -1419,7 +1419,7 @@ func (i *Toplevel) Resize(seat *Seat, serial uint32, edges ToplevelResizeEdge) {
 // strictly negative values for width or height will result in a
 // invalid_size error.
 func (i *Toplevel) SetMaxSize(width int32, height int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 7)
@@ -1466,7 +1466,7 @@ func (i *Toplevel) SetMaxSize(width int32, height int32) {
 // strictly negative values for width and height will result in a
 // invalid_size error.
 func (i *Toplevel) SetMinSize(width int32, height int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 8)
@@ -1499,7 +1499,7 @@ func (i *Toplevel) SetMinSize(width int32, height int32) {
 // effect. It may alter the state the surface is returned to when
 // unmaximized unless overridden by the compositor.
 func (i *Toplevel) SetMaximized() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 9)
@@ -1532,7 +1532,7 @@ func (i *Toplevel) SetMaximized() {
 // effect. It may alter the state the surface is returned to when
 // unmaximized unless overridden by the compositor.
 func (i *Toplevel) UnsetMaximized() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 10)
@@ -1567,7 +1567,7 @@ func (i *Toplevel) UnsetMaximized() {
 // up of subsurfaces, popups or similarly coupled surfaces) are not
 // visible below the fullscreened surface.
 func (i *Toplevel) SetFullscreen(output *Output) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 11)
@@ -1601,7 +1601,7 @@ func (i *Toplevel) SetFullscreen(output *Output) {
 // The client must also acknowledge the configure when committing the new
 // content (see ack_configure).
 func (i *Toplevel) UnsetFullscreen() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 12)
@@ -1621,7 +1621,7 @@ func (i *Toplevel) UnsetFullscreen() {
 // also work with live previews on windows in Alt-Tab, Expose or
 // similar compositor features.
 func (i *Toplevel) SetMinimized() {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 13)
@@ -2088,7 +2088,7 @@ func (i *Popup) Destroy() {
 }
 func destroyPopup(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -2140,7 +2140,7 @@ func destroyPopup(p wayland.BaseProxy) {
 // seat : the wl_seat of the user event
 // serial : the serial of the user event
 func (i *Popup) Grab(seat *Seat, serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -2179,7 +2179,7 @@ func (i *Popup) Grab(seat *Seat, serial uint32) {
 //
 // token : reposition request token
 func (i *Popup) Reposition(positioner *Positioner, token uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)

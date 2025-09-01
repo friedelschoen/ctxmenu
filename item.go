@@ -8,199 +8,193 @@ import (
 	xdraw "golang.org/x/image/draw"
 )
 
-/* itemState is an element inside a Menu */
-type itemState[T comparable] interface {
+/* Item is an element inside a Menu */
+type Item[T comparable] interface {
 	Id() T
-	Parent() *menuState[T]
-	GetSubMenu() *menuState[T]
-	Geometry() (int, int)
-	Draw(draw.Image, image.Rectangle, ColorPair)
+	GetSubMenu() []Item[T]
+	Geometry(*ContextMenu) (int, int)
+	Draw(*ContextMenu, draw.Image, image.Rectangle, ColorPair) error
 	Selectable() bool
+	Label() string
 }
 
-type labelItem[T comparable] struct {
-	Item[T]
-	ctxmenu  *ContextMenu
-	menu     *menuState[T] /* parent */
+/* BaseItem houdt caches en afmetingen bij; geen virtuele methoden meer. */
+type BaseItem struct {
 	labeltex draw.Image
-	submenu  *menuState[T] /* submenu spawned by clicking on item */
 	icon     draw.Image
-
-	w, h int /* item geometry */
+	w, h     int /* item geometry */
 }
 
-func newLabelItem[T comparable](menu *menuState[T], orig Item[T]) (itemState[T], error) {
-	item := &labelItem[T]{
-		Item:    orig,
-		ctxmenu: menu.ctxmenu,
-		menu:    menu,
+/* klein “view”-interface dat de concrete item-inhoud levert */
+type itemView interface {
+	Label() string
+	HasSubMenu() bool
+	Imagefile() string
+}
+
+/* gedeelde geometry-implementatie; gebruikt concrete self voor data */
+func ItemGeometry(ctxmenu *ContextMenu, base *BaseItem, self itemView) (int, int) {
+	if base.w == 0 || base.h == 0 {
+		w := ctxmenu.PaddingX*2 + ctxmenu.measureText(self.Label())
+		h := ctxmenu.font.Metrics().Height.Ceil() + ctxmenu.PaddingY*2
+
+		if self.HasSubMenu() {
+			w += ctxmenu.SubmenuArrowWidth
+		}
+		if imgpath := self.Imagefile(); imgpath != "" && !ctxmenu.DisableIcons {
+			w += ctxmenu.IconSize + ctxmenu.PaddingX
+			if h < ctxmenu.IconSize+ctxmenu.PaddingY*2 {
+				h = ctxmenu.IconSize + ctxmenu.PaddingY*2
+			}
+		}
+		base.w, base.h = w, h
 	}
-
-	item.w = menu.ctxmenu.PaddingX * 2
-
-	item.w += menu.ctxmenu.measureText(item.Label)
-	item.h = menu.ctxmenu.font.Metrics().Height.Ceil() + menu.ctxmenu.PaddingY*2
-
-	/* try to load icon */
-	if item.Imagefile != "" && !menu.ctxmenu.DisableIcons {
-		dec, err := getDecoder(item.Imagefile)
-		if err != nil {
-			return nil, err
-		}
-
-		r, err := os.Open(item.Imagefile)
-		if err != nil {
-			return nil, err
-		}
-		defer r.Close()
-		img, err := dec(r)
-		if err != nil {
-			return nil, err
-		}
-
-		dst := image.NewRGBA(image.Rect(0, 0, menu.ctxmenu.IconSize, menu.ctxmenu.IconSize))
-		item.icon = dst
-
-		// Ugh, NearestNeighbor is ugly... but really fast and suits the case as I want to create small 30x30 (or so) icons
-		xdraw.NearestNeighbor.Scale(dst, dst.Rect, img, img.Bounds(), draw.Src, nil)
-		item.w += menu.ctxmenu.IconSize + menu.ctxmenu.PaddingX
-		item.h = max(item.h, menu.ctxmenu.IconSize+menu.ctxmenu.PaddingY*2)
-	}
-	if len(item.SubMenu) > 0 {
-		item.w += menu.ctxmenu.SubmenuArrowWidth
-		var err error
-		item.submenu, err = item.SubMenu.makeMenu(menu.ctxmenu, item)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return item, nil
+	return base.w, base.h
 }
 
-func (item *labelItem[T]) Selectable() bool {
-	return true
-}
-func (item *labelItem[T]) Parent() *menuState[T] {
-	return item.menu
-}
-func (item *labelItem[T]) Id() T {
-	return item.Output
-}
-func (item *labelItem[T]) GetSubMenu() *menuState[T] {
-	return item.submenu
-}
-func (item *labelItem[T]) Geometry() (int, int) {
-	return item.w, item.h
-}
-func (item *labelItem[T]) Draw(dst draw.Image, bounds image.Rectangle, color ColorPair) {
+/* gedeelde draw-implementatie; gebruikt BaseItem caches + concrete self-data */
+func ItemDraw(ctxmenu *ContextMenu, base *BaseItem, self itemView, dst draw.Image, bounds image.Rectangle, color ColorPair) error {
 	img := &SubImage{dst, bounds}
 
+	/* achtergrond */
 	draw.Draw(img, img.Bounds(), color.Background, image.Point{}, draw.Src)
 
-	x := item.ctxmenu.PaddingX + item.ctxmenu.BorderSize
-	if item.icon != nil {
-		x += item.ctxmenu.IconSize + item.ctxmenu.PaddingX
+	/* icon laden/scale'n (eenmalig) */
+	if base.icon == nil && self.Imagefile() != "" && !ctxmenu.DisableIcons {
+		dec, err := getDecoder(self.Imagefile())
+		if err != nil {
+			return err
+		}
+		r, err := os.Open(self.Imagefile())
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+
+		srcimg, err := dec(r)
+		if err != nil {
+			return err
+		}
+		dstimg := image.NewRGBA(image.Rect(0, 0, ctxmenu.IconSize, ctxmenu.IconSize))
+		xdraw.NearestNeighbor.Scale(dstimg, dstimg.Rect, srcimg, srcimg.Bounds(), draw.Src, nil)
+		base.icon = dstimg
 	}
 
-	textH := item.ctxmenu.font.Metrics().Height.Ceil()
-	textW := item.ctxmenu.measureText(item.Label)
-	if item.labeltex == nil {
-		item.labeltex = image.NewAlpha(image.Rect(0, 0, textW, textH))
-		item.ctxmenu.drawText(item.labeltex, item.Label)
-	}
-	textY := item.h/2 - textH/2
-
-	draw.DrawMask(img, item.labeltex.Bounds().Add(image.Point{x, textY}), color.Foreground, image.Point{}, item.labeltex, image.Point{}, draw.Over)
-
-	if item.submenu != nil {
-		x := bounds.Dx() - item.ctxmenu.SubmenuArrowWidth - item.ctxmenu.SubmenuArrowMargin - item.ctxmenu.BorderSize - item.ctxmenu.PaddingX
-
-		DrawArrow(img, image.Rect(x, 0, x+item.ctxmenu.SubmenuArrowWidth, item.h-item.ctxmenu.SubmenuArrowMargin*2), color.Foreground, image.Point{}, DirRight)
+	/* icon tekenen */
+	x := ctxmenu.PaddingX + ctxmenu.BorderSize
+	if base.icon != nil {
+		iy := bounds.Dy()/2 - ctxmenu.IconSize/2
+		draw.Draw(img, image.Rect(x, iy, x+ctxmenu.IconSize, iy+ctxmenu.IconSize), base.icon, image.Point{}, draw.Over)
+		x += ctxmenu.IconSize + ctxmenu.PaddingX
 	}
 
-	if item.icon != nil {
-		x := item.ctxmenu.BorderSize + item.ctxmenu.PaddingX
-		y := item.h/2 - item.ctxmenu.IconSize/2
-		draw.Draw(img, image.Rect(x, y, x+item.ctxmenu.IconSize, y+item.ctxmenu.IconSize), item.icon, image.Point{}, draw.Over)
+	/* tekst pre-render/cachen (rebuild als breedte verandert) */
+	textH := ctxmenu.font.Metrics().Height.Ceil()
+	textW := ctxmenu.measureText(self.Label())
+	if base.labeltex == nil || base.labeltex.Bounds().Dx() != textW || base.labeltex.Bounds().Dy() != textH {
+		base.labeltex = image.NewAlpha(image.Rect(0, 0, textW, textH))
+		ctxmenu.drawText(base.labeltex, self.Label())
 	}
+	textY := bounds.Dy()/2 - textH/2
+	draw.DrawMask(img, base.labeltex.Bounds().Add(image.Point{x, textY}), color.Foreground, image.Point{}, base.labeltex, image.Point{}, draw.Over)
 
-}
-
-type overflowItem[T comparable] struct {
-	ctxmenu *ContextMenu
-	menu    *menuState[T] /* parent */
-	dir     Dir
-}
-
-func newOverflowItem[T comparable](menu *menuState[T], dir Dir) itemState[T] {
-	item := &overflowItem[T]{
-		ctxmenu: menu.ctxmenu,
-		menu:    menu,
-		dir:     dir,
+	/* submenu-pijl rechts */
+	if self.HasSubMenu() {
+		ax := bounds.Dx() - ctxmenu.SubmenuArrowWidth - ctxmenu.SubmenuArrowMargin - ctxmenu.BorderSize - ctxmenu.PaddingX
+		ay1 := ctxmenu.SubmenuArrowMargin
+		ay2 := bounds.Dy() - ctxmenu.SubmenuArrowMargin
+		DrawArrow(
+			img,
+			image.Rect(ax, ay1, ax+ctxmenu.SubmenuArrowWidth, ay2),
+			color.Foreground,
+			image.Point{},
+			DirRight,
+		)
 	}
-
-	return item
-}
-
-func (item *overflowItem[T]) Selectable() bool {
-	return false
-}
-func (item *overflowItem[T]) Parent() *menuState[T] {
-	return item.menu
-}
-func (item *overflowItem[T]) Id() (def T) {
-	return def
-}
-func (item *overflowItem[T]) GetSubMenu() *menuState[T] {
 	return nil
 }
-func (item *overflowItem[T]) Geometry() (int, int) {
-	return 0, item.ctxmenu.OverflowArrowHeight + item.ctxmenu.PaddingY*2
+
+/* LabelItem: concrete implementatie die de helpers gebruikt */
+type LabelItem[T comparable] struct {
+	BaseItem
+	Text      string /* string to be drawn on menu */
+	Output    T      /* string to be output when item is clicked */
+	Imagepath string
+	SubMenu   []Item[T]
 }
-func (item *overflowItem[T]) Draw(dst draw.Image, bounds image.Rectangle, color ColorPair) {
-	m := item.ctxmenu.OverflowArrowMargin
+
+func (item *LabelItem[T]) Selectable() bool { return true }
+func (item *LabelItem[T]) Id() T            { return item.Output }
+func (item *LabelItem[T]) GetSubMenu() []Item[T] {
+	return item.SubMenu
+}
+func (item *LabelItem[T]) HasSubMenu() bool { return len(item.SubMenu) != 0 }
+func (item *LabelItem[T]) Label() string    { return item.Text }
+func (item *LabelItem[T]) Imagefile() string {
+	return item.Imagepath
+}
+
+/* Verplicht volgens je Item[T]-interface */
+func (item *LabelItem[T]) Geometry(ctxmenu *ContextMenu) (int, int) {
+	return ItemGeometry(ctxmenu, &item.BaseItem, item)
+}
+
+func (item *LabelItem[T]) Draw(ctxmenu *ContextMenu, dst draw.Image, bounds image.Rectangle, color ColorPair) error {
+	/* let the shared implementation call the correct Label()/HasSubMenu()/Imagefile() */
+	return ItemDraw(ctxmenu, &item.BaseItem, item, dst, bounds, color)
+}
+
+type overflowItem[T comparable] Dir
+
+func (item overflowItem[T]) Selectable() bool {
+	return false
+}
+func (item overflowItem[T]) Id() (def T) {
+	return
+}
+func (item overflowItem[T]) GetSubMenu() []Item[T] {
+	return nil
+}
+func (item overflowItem[T]) Geometry(ctxmenu *ContextMenu) (int, int) {
+	return 0, ctxmenu.OverflowArrowHeight + ctxmenu.PaddingY*2
+}
+func (item overflowItem[T]) Label() string {
+	return ""
+}
+func (item overflowItem[T]) Draw(ctxmenu *ContextMenu, dst draw.Image, bounds image.Rectangle, color ColorPair) error {
+	m := ctxmenu.OverflowArrowMargin
 	r := bounds
 	r.Min = r.Min.Add(image.Point{m, m})
 	r.Max = r.Max.Sub(image.Point{m, m})
 
 	draw.Draw(dst, bounds, color.Background, image.Point{}, draw.Src)
-	DrawArrow(dst, r, color.Foreground, image.Point{}, item.dir)
-}
-
-type separatorItem[T comparable] struct {
-	ctxmenu *ContextMenu
-	menu    *menuState[T] /* parent */
-}
-
-func newseparatorItem[T comparable](menu *menuState[T], dir Dir) itemState[T] {
-	item := &separatorItem[T]{
-		ctxmenu: menu.ctxmenu,
-		menu:    menu,
-	}
-
-	return item
-}
-
-func (item *separatorItem[T]) Selectable() bool {
-	return false
-}
-func (item *separatorItem[T]) Parent() *menuState[T] {
-	return item.menu
-}
-func (item *separatorItem[T]) Id() (def T) {
-	return def
-}
-func (item *separatorItem[T]) GetSubMenu() *menuState[T] {
+	DrawArrow(dst, r, color.Foreground, image.Point{}, Dir(item))
 	return nil
 }
-func (item *separatorItem[T]) Geometry() (int, int) {
-	w := item.ctxmenu.PaddingX * 2
-	h := 1 + item.ctxmenu.PaddingY*2
+
+type SeparatorItem[T comparable] struct{}
+
+func (item SeparatorItem[T]) Selectable() bool {
+	return false
+}
+func (item SeparatorItem[T]) Id() (def T) {
+	return
+}
+func (item SeparatorItem[T]) GetSubMenu() []Item[T] {
+	return nil
+}
+func (item SeparatorItem[T]) Geometry(ctxmenu *ContextMenu) (int, int) {
+	w := ctxmenu.PaddingX * 2
+	h := 1 + ctxmenu.PaddingY*2
 	return w, h
 }
-func (item *separatorItem[T]) Draw(dst draw.Image, bounds image.Rectangle, color ColorPair) {
-	x := bounds.Min.X + item.ctxmenu.BorderSize + item.ctxmenu.PaddingX + item.ctxmenu.SeperatorLength
-	y := bounds.Min.Y + item.ctxmenu.PaddingY
-	draw.Draw(dst, image.Rect(x, y, x+bounds.Dx()-x*2, y+1), item.ctxmenu.separator, image.Point{}, draw.Src)
+func (item SeparatorItem[T]) Label() string {
+	return ""
+}
+func (item SeparatorItem[T]) Draw(ctxmenu *ContextMenu, dst draw.Image, bounds image.Rectangle, color ColorPair) error {
+	x := bounds.Min.X + ctxmenu.BorderSize + ctxmenu.PaddingX + ctxmenu.SeperatorLength
+	y := bounds.Min.Y + ctxmenu.PaddingY
+	draw.Draw(dst, bounds, color.Background, image.Point{}, draw.Src)
+	draw.Draw(dst, image.Rect(x, y, x+bounds.Dx()-x*2, y+1), ctxmenu.separator, image.Point{}, draw.Src)
+	return nil
 }

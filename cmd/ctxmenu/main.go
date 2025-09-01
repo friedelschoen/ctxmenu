@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	var rootmenu ctxmenu.Menu[string]
+	var rootmenu []ctxmenu.Item[string]
 
 	scan := bufio.NewScanner(os.Stdin)
 	delim := '\t'
@@ -53,13 +53,22 @@ func main() {
 			if len(*m) == 0 {
 				panic("too deep")
 			}
-			m = &(*m)[len(*m)-1].SubMenu
+			item := (*m)[len(*m)-1]
+			li, ok := item.(*ctxmenu.LabelItem[string])
+			if !ok {
+				panic("not a regular item")
+			}
+			m = &li.SubMenu
 		}
-		*m = append(*m, ctxmenu.Item[string]{
-			Label:     label,
-			Output:    output,
-			Imagefile: imgpath,
-		})
+		if label == "" {
+			*m = append(*m, &ctxmenu.SeparatorItem[string]{})
+		} else {
+			*m = append(*m, &ctxmenu.LabelItem[string]{
+				Text:      label,
+				Output:    output,
+				Imagepath: imgpath,
+			})
+		}
 	}
 
 	res, err := ctxmenu.Run(rootmenu, nil, "", func(s string) {

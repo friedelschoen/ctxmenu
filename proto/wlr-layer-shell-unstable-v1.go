@@ -92,7 +92,7 @@ func (i *LayerShell) Name() string {
 // layer : layer to add this surface to
 // namespace : namespace for the layer surface
 func (i *LayerShell) GetLayerSurface(surface *WlSurface, output *Output, layer LayerShellLayer, namespace string, idHandlers *LayerSurfaceHandlers) *LayerSurface {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return nil
 	}
 	id := NewLayerSurface(idHandlers)
@@ -124,7 +124,7 @@ func (i *LayerShell) Destroy() {
 }
 func destroyLayerShell(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -268,7 +268,7 @@ func (i *LayerSurface) Name() string {
 //
 // Size is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetSize(width uint32, height uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 0)
@@ -289,7 +289,7 @@ func (i *LayerSurface) SetSize(width uint32, height uint32) {
 //
 // Anchor is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetAnchor(anchor LayerSurfaceAnchor) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 1)
@@ -334,7 +334,7 @@ func (i *LayerSurface) SetAnchor(anchor LayerSurfaceAnchor) {
 //
 // Exclusive zone is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetExclusiveZone(zone int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 2)
@@ -354,7 +354,7 @@ func (i *LayerSurface) SetExclusiveZone(zone int32) {
 //
 // Margin is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetMargin(top int32, right int32, bottom int32, left int32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 3)
@@ -382,7 +382,7 @@ func (i *LayerSurface) SetMargin(top int32, right int32, bottom int32, left int3
 //
 // Keyboard interactivity is double-buffered, see wl_surface.commit.
 func (i *LayerSurface) SetKeyboardInteractivity(keyboardInteractivity LayerSurfaceKeyboardInteractivity) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 4)
@@ -402,7 +402,7 @@ func (i *LayerSurface) SetKeyboardInteractivity(keyboardInteractivity LayerSurfa
 // See the documentation of xdg_popup for more details about what an
 // xdg_popup is and how it is used.
 func (i *LayerSurface) GetPopup(popup *Popup) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 5)
@@ -432,7 +432,7 @@ func (i *LayerSurface) GetPopup(popup *Popup) {
 //
 // serial : the serial from the configure event
 func (i *LayerSurface) AckConfigure(serial uint32) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 6)
@@ -450,7 +450,7 @@ func (i *LayerSurface) Destroy() {
 }
 func destroyLayerSurface(p wayland.BaseProxy) {
 	i := &p
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 7)
@@ -467,7 +467,7 @@ func destroyLayerSurface(p wayland.BaseProxy) {
 //
 // layer : layer to move this surface to
 func (i *LayerSurface) SetLayer(layer LayerShellLayer) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 8)
@@ -488,7 +488,7 @@ func (i *LayerSurface) SetLayer(layer LayerShellLayer) {
 // The edge must be one the surface is anchored to, otherwise the
 // invalid_exclusive_edge protocol error will be raised.
 func (i *LayerSurface) SetExclusiveEdge(edge LayerSurfaceAnchor) {
-	if !i.Valid() {
+	if i == nil || !i.Valid() {
 		return
 	}
 	w := wayland.NewMessageWriter(i, 9)

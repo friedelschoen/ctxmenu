@@ -9,6 +9,7 @@ Applications
 	IMG:./icons/web.png		Web Browser		firefox
 	IMG:./icons/gimp.png	Image editor	gimp
 
-Reboot
-Shutdown
+Logout
+	Reboot
+	Shutdown
 EOF
